@@ -24,6 +24,10 @@ It enables motion control & host software developers to develop, test, and verif
 
 - Watch the full highlight clip (~27s, 1.6 MB): [`demo_highlight.mp4`](./demo_highlight.mp4)
 
+
+https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
+
+
 ### Key Features
 
 1. **9-Byte Binary TMCL Protocol Engine**:
@@ -114,7 +118,7 @@ Looking for custom industrial software, virtual commissioning tools, or motion-c
 ### 操作展示影片
 
 - 精華操作短片（約 27 秒，1.6 MB）：[`demo_highlight.mp4`](./demo_highlight.mp4)
-
+https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
 ### 核心特色
 
 1. **完整 9-Byte Binary 二進制封包引擎**：
