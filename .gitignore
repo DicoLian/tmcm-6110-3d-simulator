@@ -28,3 +28,6 @@ bld/
 *.ini
 *.tmc
 標示.txt
+
+## Raw Screen Recordings (Replaced by compressed demo_highlight.mp4 & demo.gif)
+螢幕錄製*.mp4

@@ -7,6 +7,8 @@
 
 **[English](#english) | [繁體中文](#繁體中文)**
 
+![TMCM-6110 3D Simulator Demo](./demo.gif)
+
 ---
 
 <a id="english"></a>
@@ -20,7 +22,7 @@ It enables motion control & host software developers to develop, test, and verif
 
 ### Demo Video
 
-- Watch the simulator in action: [`螢幕錄製 2026-11-18 151057.mp4`](./%E8%9E%A2%E5%B9%95%E9%8C%84%E8%A3%BD%202026-11-18%20151057.mp4)
+- Watch the full highlight clip (~27s, 1.6 MB): [`demo_highlight.mp4`](./demo_highlight.mp4)
 
 ### Key Features
 
@@ -111,7 +113,7 @@ Looking for custom industrial software, virtual commissioning tools, or motion-c
 
 ### 操作展示影片
 
-- 實際操作錄影：[`螢幕錄製 2026-11-18 151057.mp4`](./%E8%9E%A2%E5%B9%95%E9%8C%84%E8%A3%BD%202026-11-18%20151057.mp4)
+- 精華操作短片（約 27 秒，1.6 MB）：[`demo_highlight.mp4`](./demo_highlight.mp4)
 
 ### 核心特色
 
