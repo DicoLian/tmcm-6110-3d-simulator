@@ -1,0 +1,66 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <sys:String x:Key="WindowTitle">TMCM-6110 三軸運動控制器 3D 模擬器 (9-Byte Binary | Axis0=Z, Axis1=Y, Axis2=X)</sys:String>
+    <sys:String x:Key="AppHeaderTitle">TMCM-6110 模擬器</sys:String>
+    <sys:String x:Key="BtnRescan">重新掃描</sys:String>
+    <sys:String x:Key="BtnLoadConfig">載入設定 (.ini / .tmc)</sys:String>
+    <sys:String x:Key="BtnDemoInterp">3D 插補展示 (MVP COORD)</sys:String>
+    <sys:String x:Key="BtnHomeAll">全軸原點復歸 (RFS)</sys:String>
+    <sys:String x:Key="BtnStopAll">全軸急停 (MST)</sys:String>
+    <sys:String x:Key="BtnToggleLanguage">🌐 EN / 繁中</sys:String>
+    <sys:String x:Key="TipToggleLanguage">切換介面語言 (繁體中文 / English)</sys:String>
+
+    <sys:String x:Key="LegendTitle">3D 龍門機構動態視圖 (Z-Y-X 映射)</sys:String>
+    <sys:String x:Key="LegendAxisZ">• 藍色垂直主軸 = Motor #0 (Z 軸 - 升降)</sys:String>
+    <sys:String x:Key="LegendAxisY">• 綠色前後龍門 = Motor #1 (Y 軸 - 前後)</sys:String>
+    <sys:String x:Key="LegendAxisX">• 紅色左右橫移 = Motor #2 (X 軸 - 左右)</sys:String>
+    <sys:String x:Key="LegendTrail">• 金色光帶 = 3D 工具尖端 (TCP) 運動軌跡</sys:String>
+    <sys:String x:Key="LegendMouseHint">• 滑鼠左鍵/右鍵拖曳旋轉 | 滾輪縮放視角</sys:String>
+    <sys:String x:Key="BtnClearTrail">清除 3D 軌跡</sys:String>
+    <sys:String x:Key="BtnResetCamera">重置 3D 視角</sys:String>
+
+    <sys:String x:Key="LedPosReached">到位(#8)</sys:String>
+    <sys:String x:Key="LedMove">MOVE</sys:String>
+    <sys:String x:Key="LedPosLimit">+Limit(#10)</sys:String>
+    <sys:String x:Key="LedNegLimit">-Limit(#11)</sys:String>
+    <sys:String x:Key="LedAlarm">ALARM(#207/#208)</sys:String>
+
+    <sys:String x:Key="LblActualPos">Actual Pos (#1)</sys:String>
+    <sys:String x:Key="LblTargetPos">Target Pos (#0)</sys:String>
+    <sys:String x:Key="LblMechPosMm">機械位置 (mm)</sys:String>
+    <sys:String x:Key="LblSpeed">Speed (#3 / #4)</sys:String>
+    <sys:String x:Key="LblMicrostep">微步 (#140)</sys:String>
+    <sys:String x:Key="LblRfsMode">原點模式 (#193)</sys:String>
+
+    <sys:String x:Key="LblTargetSteps">目標步數:</sys:String>
+    <sys:String x:Key="TipMvpAbs">發送 MVP ABS 絕對定位指令</sys:String>
+    <sys:String x:Key="TipMvpRelPos">發送 MVP REL 正向相對移動</sys:String>
+    <sys:String x:Key="TipMvpRelNeg">發送 MVP REL 負向相對移動</sys:String>
+    <sys:String x:Key="LblJogSpeed">Jog速度:</sys:String>
+    <sys:String x:Key="TipJogLeft">反向連續旋轉 (ROL)</sys:String>
+    <sys:String x:Key="TipJogRight">正向連續旋轉 (ROR)</sys:String>
+    <sys:String x:Key="BtnMstStop">■ MST停</sys:String>
+    <sys:String x:Key="BtnRfsHome">RFS 原點</sys:String>
+    <sys:String x:Key="TipRfsHome">依 Param #193 執行原點搜尋</sys:String>
+    <sys:String x:Key="TipZeroPos">將當前實際位置 (#1) 設為 0</sys:String>
+
+    <sys:String x:Key="ChkForcePosLimit">強制觸發 +Limit (#10)</sys:String>
+    <sys:String x:Key="ChkForceNegLimit">強制觸發 -Limit (#11/#9)</sys:String>
+    <sys:String x:Key="BtnToggleAlarm">注入 / 清除 Alarm (#207/#208)</sys:String>
+
+    <sys:String x:Key="SnifferTitle">9-Byte Binary 封包監控與即時反組譯 (Packet Sniffer)</sys:String>
+    <sys:String x:Key="LblTotalRxPackets">累計接收封包數: </sys:String>
+    <sys:String x:Key="ChkHidePolling">隱藏高頻輪詢封包 (GAP / GGP / GIO / RFS STATUS) 避免洗版</sys:String>
+    <sys:String x:Key="BtnClearAllAlarms">清除全部 Alarm (CLE)</sys:String>
+    <sys:String x:Key="BtnClearLogs">清空封包紀錄</sys:String>
+
+    <sys:String x:Key="ColTimestamp">時間</sys:String>
+    <sys:String x:Key="ColDirection">方向</sys:String>
+    <sys:String x:Key="ColRxHex">上位機送出 9-Byte RX (Hex)</sys:String>
+    <sys:String x:Key="ColDecoded">TMCL 指令自動反組譯</sys:String>
+    <sys:String x:Key="ColTxHex">模擬器回覆 9-Byte TX (Hex)</sys:String>
+    <sys:String x:Key="ColReplySummary">回覆狀態與數值解析</sys:String>
+
+</ResourceDictionary>

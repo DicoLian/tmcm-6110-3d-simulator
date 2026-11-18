@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Title>TMCM-6110 3-Axis (Z-Y-X) 3D Motion Simulator</Title>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tmcm6110.Core\Tmcm6110.Core.csproj" />
+  </ItemGroup>
+
+</Project>

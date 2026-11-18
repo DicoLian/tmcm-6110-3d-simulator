@@ -1,0 +1,66 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <sys:String x:Key="WindowTitle">TMCM-6110 3-Axis Motion Controller 3D Simulator (9-Byte Binary | Axis0=Z, Axis1=Y, Axis2=X)</sys:String>
+    <sys:String x:Key="AppHeaderTitle">TMCM-6110 Simulator</sys:String>
+    <sys:String x:Key="BtnRescan">Rescan</sys:String>
+    <sys:String x:Key="BtnLoadConfig">Load .ini / .tmc</sys:String>
+    <sys:String x:Key="BtnDemoInterp">3D Interp Demo (MVP COORD)</sys:String>
+    <sys:String x:Key="BtnHomeAll">Home All (RFS)</sys:String>
+    <sys:String x:Key="BtnStopAll">Stop All (MST)</sys:String>
+    <sys:String x:Key="BtnToggleLanguage">🌐 EN / 繁中</sys:String>
+    <sys:String x:Key="TipToggleLanguage">Switch UI Language (English / 繁體中文)</sys:String>
+
+    <sys:String x:Key="LegendTitle">3D Gantry Stage Live View (Z-Y-X Mapping)</sys:String>
+    <sys:String x:Key="LegendAxisZ">• Blue Vertical Spindle = Motor #0 (Z-Axis - Up/Down)</sys:String>
+    <sys:String x:Key="LegendAxisY">• Green Gantry Bridge = Motor #1 (Y-Axis - Front/Back)</sys:String>
+    <sys:String x:Key="LegendAxisX">• Red Cross Carriage = Motor #2 (X-Axis - Left/Right)</sys:String>
+    <sys:String x:Key="LegendTrail">• Gold Ribbon = 3D Tool Center Point (TCP) Trajectory</sys:String>
+    <sys:String x:Key="LegendMouseHint">• LMB/RMB Drag: Orbit Rotate | Scroll Wheel: Zoom</sys:String>
+    <sys:String x:Key="BtnClearTrail">Clear 3D Trail</sys:String>
+    <sys:String x:Key="BtnResetCamera">Reset Camera</sys:String>
+
+    <sys:String x:Key="LedPosReached">InPos(#8)</sys:String>
+    <sys:String x:Key="LedMove">MOVE</sys:String>
+    <sys:String x:Key="LedPosLimit">+Limit(#10)</sys:String>
+    <sys:String x:Key="LedNegLimit">-Limit(#11)</sys:String>
+    <sys:String x:Key="LedAlarm">ALARM(#207/#208)</sys:String>
+
+    <sys:String x:Key="LblActualPos">Actual Pos (#1)</sys:String>
+    <sys:String x:Key="LblTargetPos">Target Pos (#0)</sys:String>
+    <sys:String x:Key="LblMechPosMm">Mech Pos (mm)</sys:String>
+    <sys:String x:Key="LblSpeed">Speed (#3 / #4)</sys:String>
+    <sys:String x:Key="LblMicrostep">Microstep (#140)</sys:String>
+    <sys:String x:Key="LblRfsMode">RFS Mode (#193)</sys:String>
+
+    <sys:String x:Key="LblTargetSteps">Target:</sys:String>
+    <sys:String x:Key="TipMvpAbs">Send MVP ABS (Absolute Move)</sys:String>
+    <sys:String x:Key="TipMvpRelPos">Send MVP REL (+ Relative Move)</sys:String>
+    <sys:String x:Key="TipMvpRelNeg">Send MVP REL (- Relative Move)</sys:String>
+    <sys:String x:Key="LblJogSpeed">Jog Vel:</sys:String>
+    <sys:String x:Key="TipJogLeft">Rotate Left Continuously (ROL)</sys:String>
+    <sys:String x:Key="TipJogRight">Rotate Right Continuously (ROR)</sys:String>
+    <sys:String x:Key="BtnMstStop">■ MST Stop</sys:String>
+    <sys:String x:Key="BtnRfsHome">RFS Home</sys:String>
+    <sys:String x:Key="TipRfsHome">Start Reference Search (Param #193)</sys:String>
+    <sys:String x:Key="TipZeroPos">Set Actual Position (#1) to 0</sys:String>
+
+    <sys:String x:Key="ChkForcePosLimit">Force +Limit (#10)</sys:String>
+    <sys:String x:Key="ChkForceNegLimit">Force -Limit (#11/#9)</sys:String>
+    <sys:String x:Key="BtnToggleAlarm">Inject / Clear Alarm (#207/#208)</sys:String>
+
+    <sys:String x:Key="SnifferTitle">9-Byte Binary Packet Sniffer &amp; Disassembler</sys:String>
+    <sys:String x:Key="LblTotalRxPackets">Total RX Packets: </sys:String>
+    <sys:String x:Key="ChkHidePolling">Hide High-Rate Polling Packets (GAP / GGP / GIO / RFS STATUS)</sys:String>
+    <sys:String x:Key="BtnClearAllAlarms">Clear All Alarms (CLE)</sys:String>
+    <sys:String x:Key="BtnClearLogs">Clear Log</sys:String>
+
+    <sys:String x:Key="ColTimestamp">Time</sys:String>
+    <sys:String x:Key="ColDirection">Dir</sys:String>
+    <sys:String x:Key="ColRxHex">Host TX -&gt; Sim RX (9-Byte Hex)</sys:String>
+    <sys:String x:Key="ColDecoded">TMCL Disassembled Mnemonic</sys:String>
+    <sys:String x:Key="ColTxHex">Sim Reply TX (9-Byte Hex)</sys:String>
+    <sys:String x:Key="ColReplySummary">Reply Status &amp; Decoded Value</sys:String>
+
+</ResourceDictionary>

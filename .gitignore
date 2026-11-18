@@ -1,0 +1,30 @@
+## Visual Studio / .NET
+.vs/
+bin/
+obj/
+out/
+TestResults/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.nupkg
+*.snupkg
+*.vsidx
+*.cache
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## Private / Customer Configuration Files (Do not upload to GitHub)
+*.ini
+*.tmc
+標示.txt
