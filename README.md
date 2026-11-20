@@ -113,3 +113,4 @@ Looking for custom industrial software, virtual commissioning tools, or motion-c
 
 - This simulator's source code is licensed under the [MIT License](./LICENSE).
 - [`TMCL_reference.pdf`](./TMCL_reference.pdf) is copyright **Analog Devices / Trinamic** and is included solely as protocol reference documentation.
+- **Disclaimer**: This is an independent, unofficial open-source project and is **not** affiliated with, endorsed by, or sponsored by **Analog Devices, Inc.** or **Trinamic**. `TMCM-6110`, `TMCL`, `StallGuard2`, and `TMC262` are trademarks or product names of their respective owners.
