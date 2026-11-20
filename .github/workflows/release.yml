@@ -1,0 +1,98 @@
+name: Build & Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore Tmcm6110Simulator.sln
+
+      - name: Build solution (Release)
+        run: dotnet build Tmcm6110Simulator.sln -c Release --no-restore
+
+      - name: Run unit tests
+        run: dotnet test Tmcm6110Simulator.sln -c Release --no-build
+
+      - name: Run HostTester self-test
+        run: dotnet run --project src/Tmcm6110.HostTester/Tmcm6110.HostTester.csproj -c Release --no-build -- --self-test
+
+  release:
+    needs: build-and-test
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish Tmcm6110.App (win-x64 single-file)
+        run: >
+          dotnet publish src/Tmcm6110.App/Tmcm6110.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o dist/Tmcm6110Simulator
+
+      - name: Publish Tmcm6110.HostTester (win-x64 single-file)
+        run: >
+          dotnet publish src/Tmcm6110.HostTester/Tmcm6110.HostTester.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          -o dist/Tmcm6110Simulator
+
+      - name: Stage samples and documentation
+        shell: pwsh
+        run: |
+          Copy-Item -Path samples -Destination dist/Tmcm6110Simulator/samples -Recurse -Force
+          Copy-Item -Path LICENSE, README.md, README.zh-TW.md -Destination dist/Tmcm6110Simulator/ -Force
+
+      - name: Create release zip archive
+        shell: pwsh
+        run: |
+          $zipPath = "dist/Tmcm6110Simulator-${{ github.ref_name }}-win-x64.zip"
+          Compress-Archive -Path "dist/Tmcm6110Simulator/*" -DestinationPath $zipPath -Force
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tmcm6110Simulator-${{ github.ref_name }}-win-x64
+          path: dist/Tmcm6110Simulator-${{ github.ref_name }}-win-x64.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Tmcm6110Simulator-${{ github.ref_name }}-win-x64.zip
+          generate_release_notes: true

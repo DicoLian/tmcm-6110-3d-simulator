@@ -1,0 +1,71 @@
+// =============================================================================
+// TMCM-6110 3-Axis Gantry Demo Script (TMCL SAP/SGP Parameter Export)
+// Generic, de-identified public sample for TMCM-6110 3D Motion Simulator
+//   Axis 0 = Z-Axis (Vertical)
+//   Axis 1 = Y-Axis (Gantry Carriage)
+//   Axis 2 = X-Axis (Gantry Bridge)
+// =============================================================================
+
+// --- Global Parameters (Bank 0) ---
+SGP 65, 0, 0      // RS485 baud rate (0 = 9600 bps)
+SGP 66, 0, 1      // Serial module address = 1
+SGP 67, 0, 0      // ASCII mode disabled (binary TMCL)
+SGP 75, 0, 0      // Telegram pause time = 0 ms
+SGP 76, 0, 2      // Serial host address = 2
+SGP 77, 0, 0      // Auto start mode = 0
+SGP 79, 0, 0      // Limit switch polarity = 0
+SGP 90, 0, 0      // Reverse shaft = 0
+
+// --- Axis 0: Z-Axis (Vertical) ---
+SAP 4, 0, 1500    // Maximum positioning speed
+SAP 5, 0, 800     // Maximum acceleration
+SAP 6, 0, 128     // Absolute max current
+SAP 7, 0, 16      // Standby current
+SAP 12, 0, 1      // Right limit switch disable
+SAP 13, 0, 1      // Left limit switch disable
+SAP 130, 0, 1     // Minimum speed
+SAP 140, 0, 6     // Microstep resolution (6 = 64 microsteps)
+SAP 153, 0, 7     // Ramp divisor
+SAP 154, 0, 3     // Pulse divisor
+SAP 173, 0, 1     // StallGuard2 filter enable
+SAP 174, 0, 5     // StallGuard2 threshold
+SAP 193, 0, 65    // Reference search mode (65 = search right switch)
+SAP 194, 0, 800   // Reference search speed
+SAP 195, 0, 400   // Reference switch speed
+SAP 214, 0, 200   // Power down delay
+
+// --- Axis 1: Y-Axis (Gantry Carriage) ---
+SAP 4, 1, 1800    // Maximum positioning speed
+SAP 5, 1, 1000    // Maximum acceleration
+SAP 6, 1, 128     // Absolute max current
+SAP 7, 1, 8       // Standby current
+SAP 12, 1, 1      // Right limit switch disable
+SAP 13, 1, 1      // Left limit switch disable
+SAP 130, 1, 1     // Minimum speed
+SAP 140, 1, 6     // Microstep resolution (6 = 64 microsteps)
+SAP 153, 1, 7     // Ramp divisor
+SAP 154, 1, 3     // Pulse divisor
+SAP 173, 1, 1     // StallGuard2 filter enable
+SAP 174, 1, 5     // StallGuard2 threshold
+SAP 193, 1, 65    // Reference search mode (65 = search right switch)
+SAP 194, 1, 1000  // Reference search speed
+SAP 195, 1, 500   // Reference switch speed
+SAP 214, 1, 200   // Power down delay
+
+// --- Axis 2: X-Axis (Gantry Bridge) ---
+SAP 4, 2, 2000    // Maximum positioning speed
+SAP 5, 2, 1000    // Maximum acceleration
+SAP 6, 2, 128     // Absolute max current
+SAP 7, 2, 8       // Standby current
+SAP 12, 2, 1      // Right limit switch disable
+SAP 13, 2, 1      // Left limit switch disable
+SAP 130, 2, 1     // Minimum speed
+SAP 140, 2, 6     // Microstep resolution (6 = 64 microsteps)
+SAP 153, 2, 7     // Ramp divisor
+SAP 154, 2, 3     // Pulse divisor
+SAP 173, 2, 1     // StallGuard2 filter enable
+SAP 174, 2, 5     // StallGuard2 threshold
+SAP 193, 2, 65    // Reference search mode (65 = search right switch)
+SAP 194, 2, 1000  // Reference search speed
+SAP 195, 2, 500   // Reference switch speed
+SAP 214, 2, 200   // Power down delay
