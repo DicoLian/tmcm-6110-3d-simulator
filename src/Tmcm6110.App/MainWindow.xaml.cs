@@ -36,6 +36,7 @@ public partial class MainWindow : Window
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
         _viewModel.SceneModeChanged += OnViewModelSceneModeChanged;
+        _viewModel.AxisMappingChanged += OnViewModelAxisMappingChanged;
 
         _sceneBuilder = new Gantry3DSceneBuilder();
         MainViewport3D.Children.Add(new ModelVisual3D { Content = _sceneBuilder.RootGroup });
@@ -47,6 +48,8 @@ public partial class MainWindow : Window
     }
 
     private void OnViewModelSceneModeChanged(MachineSceneMode mode) => _sceneBuilder.SetSceneMode(mode);
+
+    private void OnViewModelAxisMappingChanged() => _sceneBuilder.ClearTrajectoryTrail();
 
     private void OnCompositionTargetRendering(object? sender, EventArgs e)
     {
@@ -67,13 +70,17 @@ public partial class MainWindow : Window
 
         double stepsPerMm = Math.Max(10.0, _viewModel.StepsPerMm);
 
-        for (int i = 0; i < 6; i++)
+        for (int motorIdx = 0; motorIdx < 6; motorIdx++)
         {
-            var snap = _viewModel.Controller.GetAxis(i).GetSnapshot();
-            _viewModel.AllAxes[i].RefreshFromSnapshot(snap, stepsPerMm);
-            _posMmBuffer[i] = snap.ExactPosition / stepsPerMm;
-            _frameBuffer[i] = new Axis3DFrame(
-                _posMmBuffer[i],
+            var snap = _viewModel.Controller.GetAxis(motorIdx).GetSnapshot();
+            var axisVm = _viewModel.AllAxes[motorIdx];
+            axisVm.RefreshFromSnapshot(snap, stepsPerMm);
+
+            int roleSlot = axisVm.AssignedRoleSlot;
+            double posMm = snap.ExactPosition / stepsPerMm;
+            _posMmBuffer[roleSlot] = posMm;
+            _frameBuffer[roleSlot] = new Axis3DFrame(
+                posMm,
                 snap.VirtualMinStrokeSteps / stepsPerMm,
                 snap.VirtualMaxStrokeSteps / stepsPerMm,
                 snap.IsRightLimitTriggered,
@@ -93,9 +100,9 @@ public partial class MainWindow : Window
             MachineSceneMode.RobotArm6Dof =>
                 $"J1={_posMmBuffer[0],5:F1} J2={_posMmBuffer[1],5:F1} J3={_posMmBuffer[2],5:F1} J4={_posMmBuffer[3],5:F1} J5={_posMmBuffer[4],5:F1} J6={_posMmBuffer[5],5:F1}",
             MachineSceneMode.LinearBench6Axis =>
-                $"A0={_posMmBuffer[0],5:F1} A1={_posMmBuffer[1],5:F1} A2={_posMmBuffer[2],5:F1} A3={_posMmBuffer[3],5:F1} A4={_posMmBuffer[4],5:F1} A5={_posMmBuffer[5],5:F1} mm",
+                $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} Ch2={_posMmBuffer[2],5:F1} Ch3={_posMmBuffer[3],5:F1} Ch4={_posMmBuffer[4],5:F1} Ch5={_posMmBuffer[5],5:F1} mm",
             _ =>
-                $"{coordPrefix} X(A2)={_posMmBuffer[2],7:F2} mm | Y(A1)={_posMmBuffer[1],7:F2} mm | Z(A0)={_posMmBuffer[0],7:F2} mm"
+                $"{coordPrefix} X(M{_viewModel.GetMotorIndexForRole(2)})={_posMmBuffer[2],7:F2} mm | Y(M{_viewModel.GetMotorIndexForRole(1)})={_posMmBuffer[1],7:F2} mm | Z(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],7:F2} mm"
         };
     }
 
@@ -263,10 +270,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void BtnMappingDefaultZyx_Click(object sender, RoutedEventArgs e) => _viewModel.ResetDefaultAxisMapping();
+
+    private void BtnMappingStandardXyz_Click(object sender, RoutedEventArgs e) => _viewModel.ApplyStandardXyzMapping();
+
     private void Window_Closed(object sender, EventArgs e)
     {
         CompositionTarget.Rendering -= OnCompositionTargetRendering;
         _viewModel.SceneModeChanged -= OnViewModelSceneModeChanged;
+        _viewModel.AxisMappingChanged -= OnViewModelAxisMappingChanged;
         _viewModel.Dispose();
     }
 }

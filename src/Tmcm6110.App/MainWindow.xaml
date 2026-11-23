@@ -166,7 +166,10 @@
                                                     <ColumnDefinition Width="*"/>
                                                 </Grid.ColumnDefinitions>
 
-                                                <TextBlock Grid.Column="0" Text="{Binding AxisTitle}" FontSize="14.5" FontWeight="Bold" Foreground="#ECF0F6" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding MotorHeaderLabel}" FontSize="14" FontWeight="Bold" Foreground="#ECF0F6" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                    <ComboBox Width="148" Height="23" ItemsSource="{Binding AvailableRoleOptions}" SelectedValuePath="Value" SelectedValue="{Binding AssignedRoleSlot}" DisplayMemberPath="Label" ToolTip="{DynamicResource TipAxisRoleSelect}" FontSize="11.5" VerticalContentAlignment="Center"/>
+                                                </StackPanel>
 
                                                 <Border Grid.Column="1" Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="7,2" VerticalAlignment="Center" Margin="0,0,8,0">
                                                     <TextBlock Text="{Binding StatusBadgeText}" FontSize="11" FontWeight="Bold" Foreground="White"/>
@@ -330,7 +333,13 @@
                                         <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableZOrigins}" SelectedValuePath="Value" SelectedValue="{Binding SelectedZOrigin}" DisplayMemberPath="Label" Height="26" VerticalContentAlignment="Center"/>
                                     </Grid>
 
-                                    <CheckBox Content="{DynamicResource ChkSyncRfsOrigin}" IsChecked="{Binding SyncRfsDirectionWithOrigin}" Foreground="#FFB74D" VerticalAlignment="Center"/>
+                                    <CheckBox Content="{DynamicResource ChkSyncRfsOrigin}" IsChecked="{Binding SyncRfsDirectionWithOrigin}" Foreground="#FFB74D" VerticalAlignment="Center" Margin="0,0,0,8"/>
+
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="{DynamicResource LblAxisMapping}" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="0,0,8,0"/>
+                                        <Button Content="{DynamicResource BtnMappingZyx}" Click="BtnMappingDefaultZyx_Click" Padding="9,3"/>
+                                        <Button Content="{DynamicResource BtnMappingXyz}" Click="BtnMappingStandardXyz_Click" Padding="9,3"/>
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
 

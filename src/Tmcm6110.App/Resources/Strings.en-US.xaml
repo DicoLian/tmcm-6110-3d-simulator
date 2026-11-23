@@ -62,6 +62,10 @@
     <sys:String x:Key="LblXyOrigin">XY Machine Origin:</sys:String>
     <sys:String x:Key="LblZOrigin">Z-Axis Origin:</sys:String>
     <sys:String x:Key="ChkSyncRfsOrigin">Sync RFS homing direction (#193) when changing origin</sys:String>
+    <sys:String x:Key="TipAxisRoleSelect">Reassign this motor's 3D axis role (auto-swaps with the target axis)</sys:String>
+    <sys:String x:Key="LblAxisMapping">Axis Mapping:</sys:String>
+    <sys:String x:Key="BtnMappingZyx">Default Z-Y-X (M0=Z, M1=Y, M2=X)</sys:String>
+    <sys:String x:Key="BtnMappingXyz">Standard X-Y-Z (M0=X, M1=Y, M2=Z)</sys:String>
     <sys:String x:Key="GrpStrokeLimits">Per-Axis Travel Stroke &amp; Limit Stop (mm)</sys:String>
     <sys:String x:Key="LblStepsPerMm">Steps/mm Scale:</sys:String>
     <sys:String x:Key="GrpTmclAddressing">TMCL Node Addressing &amp; Transport</sys:String>

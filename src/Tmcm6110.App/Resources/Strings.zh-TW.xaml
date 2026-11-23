@@ -62,6 +62,10 @@
     <sys:String x:Key="LblXyOrigin">XY 機械原點:</sys:String>
     <sys:String x:Key="LblZOrigin">Z 軸原點:</sys:String>
     <sys:String x:Key="ChkSyncRfsOrigin">切換原點時同步更新 RFS 原點搜尋方向 (#193)</sys:String>
+    <sys:String x:Key="TipAxisRoleSelect">切換此馬達對應的 3D 軸向角色（會與目標軸自動互換）</sys:String>
+    <sys:String x:Key="LblAxisMapping">軸向映射預設:</sys:String>
+    <sys:String x:Key="BtnMappingZyx">預設 Z-Y-X (M0=Z, M1=Y, M2=X)</sys:String>
+    <sys:String x:Key="BtnMappingXyz">標準 X-Y-Z (M0=X, M1=Y, M2=Z)</sys:String>
     <sys:String x:Key="GrpStrokeLimits">各軸移動行程與極限開關 (mm)</sys:String>
     <sys:String x:Key="LblStepsPerMm">Steps/mm 換算:</sys:String>
     <sys:String x:Key="GrpTmclAddressing">TMCL 節點位址與傳輸資訊</sys:String>

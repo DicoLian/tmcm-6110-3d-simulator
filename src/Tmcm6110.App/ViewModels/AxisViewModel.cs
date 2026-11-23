@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Tmcm6110.App.Localization;
@@ -17,6 +18,7 @@ public class AxisViewModel : INotifyPropertyChanged
     private readonly AxisState _axis;
     private readonly Tmcm6110Controller _controller;
     private readonly Func<double> _getStepsPerMm;
+    private readonly Action<int, int>? _onRoleChangeRequested;
 
     private string _axisTitle = string.Empty;
     private string _statusBadgeText = "IDLE";
@@ -44,9 +46,31 @@ public class AxisViewModel : INotifyPropertyChanged
     private int _lastAppliedMaxSteps;
     private bool _isLimitStopEnabled;
     private MachineSceneMode _currentSceneMode = MachineSceneMode.Gantry3Axis;
+    private int _assignedRoleSlot;
 
     public int AxisIndex => _axis.AxisIndex;
     public AxisState UnderlyingAxis => _axis;
+    public string MotorHeaderLabel => $"Motor #{_axis.AxisIndex}";
+    public ObservableCollection<SelectableOption<int>> AvailableRoleOptions { get; }
+
+    public int AssignedRoleSlot
+    {
+        get => _assignedRoleSlot;
+        set
+        {
+            if (_assignedRoleSlot == value) return;
+            if (_onRoleChangeRequested != null)
+            {
+                _onRoleChangeRequested(AxisIndex, value);
+            }
+            else
+            {
+                _assignedRoleSlot = value;
+                OnPropertyChanged();
+                UpdateAxisTitle();
+            }
+        }
+    }
 
     public string AxisTitle
     {
@@ -290,11 +314,19 @@ public class AxisViewModel : INotifyPropertyChanged
         }
     }
 
-    public AxisViewModel(AxisState axis, Tmcm6110Controller controller, Func<double>? getStepsPerMm = null)
+    public AxisViewModel(
+        AxisState axis,
+        Tmcm6110Controller controller,
+        Func<double>? getStepsPerMm = null,
+        ObservableCollection<SelectableOption<int>>? availableRoleOptions = null,
+        Action<int, int>? onRoleChangeRequested = null)
     {
         _axis = axis;
         _controller = controller;
         _getStepsPerMm = getStepsPerMm ?? (() => 1000.0);
+        AvailableRoleOptions = availableRoleOptions ?? new ObservableCollection<SelectableOption<int>>();
+        _onRoleChangeRequested = onRoleChangeRequested;
+        _assignedRoleSlot = axis.AxisIndex;
 
         double stepsPerMm = Math.Max(10.0, _getStepsPerMm());
         _lastAppliedMinSteps = _axis.VirtualMinStrokeSteps;
@@ -306,6 +338,14 @@ public class AxisViewModel : INotifyPropertyChanged
             _axis.GetParameter(TmclAxisParam.LeftLimitSwitchDisable, clearReadFlags: false) == 0;
 
         UpdateAxisTitle();
+    }
+
+    public void SetAssignedRoleSlotInternal(int roleSlot, MachineSceneMode sceneMode)
+    {
+        _assignedRoleSlot = roleSlot;
+        _currentSceneMode = sceneMode;
+        OnPropertyChanged(nameof(AssignedRoleSlot));
+        UpdateAxisTitle(sceneMode);
     }
 
     public void SetStrokeLimitsMm(double minMm, double maxMm)
@@ -361,7 +401,7 @@ public class AxisViewModel : INotifyPropertyChanged
 
         string roleDesc = _currentSceneMode switch
         {
-            MachineSceneMode.DualGantry6Axis => _axis.AxisIndex switch
+            MachineSceneMode.DualGantry6Axis => _assignedRoleSlot switch
             {
                 0 => LanguageManager.Get("Z1 軸 - 左站垂直升降", "Z1 - Left Vertical"),
                 1 => LanguageManager.Get("Y1 軸 - 左站前後移動", "Y1 - Left Front/Back"),
@@ -371,7 +411,7 @@ public class AxisViewModel : INotifyPropertyChanged
                 5 => LanguageManager.Get("X2 軸 - 右站左右橫移", "X2 - Right Left/Right"),
                 _ => _axis.AxisName
             },
-            MachineSceneMode.GantryRotaryAux6Axis => _axis.AxisIndex switch
+            MachineSceneMode.GantryRotaryAux6Axis => _assignedRoleSlot switch
             {
                 0 => LanguageManager.Get("Z 軸 - 垂直升降", "Z-Axis - Vertical"),
                 1 => LanguageManager.Get("Y 軸 - 前後移動", "Y-Axis - Front/Back"),
@@ -381,7 +421,7 @@ public class AxisViewModel : INotifyPropertyChanged
                 5 => LanguageManager.Get("B 軸 - 輔助供料滑台", "B-Axis - Aux Feeder Slide"),
                 _ => _axis.AxisName
             },
-            MachineSceneMode.RobotArm6Dof => _axis.AxisIndex switch
+            MachineSceneMode.RobotArm6Dof => _assignedRoleSlot switch
             {
                 0 => LanguageManager.Get("J1 - 底座旋轉 (Waist)", "J1 - Base Waist"),
                 1 => LanguageManager.Get("J2 - 肩部俯仰 (Shoulder)", "J2 - Shoulder Pitch"),
@@ -391,7 +431,7 @@ public class AxisViewModel : INotifyPropertyChanged
                 5 => LanguageManager.Get("J6 - 法蘭旋轉 (Flange)", "J6 - Tool Flange"),
                 _ => _axis.AxisName
             },
-            MachineSceneMode.LinearBench6Axis => _axis.AxisIndex switch
+            MachineSceneMode.LinearBench6Axis => _assignedRoleSlot switch
             {
                 0 => LanguageManager.Get("Ch 0 - 線性測試軸 #0", "Ch 0 - Linear Rail #0"),
                 1 => LanguageManager.Get("Ch 1 - 線性測試軸 #1", "Ch 1 - Linear Rail #1"),
@@ -401,11 +441,11 @@ public class AxisViewModel : INotifyPropertyChanged
                 5 => LanguageManager.Get("Ch 5 - 線性測試軸 #5", "Ch 5 - Linear Rail #5"),
                 _ => _axis.AxisName
             },
-            _ => _axis.AxisName switch
+            _ => _assignedRoleSlot switch
             {
-                "Z" => LanguageManager.Get("Z 軸 - 垂直升降", "Z-Axis - Vertical"),
-                "Y" => LanguageManager.Get("Y 軸 - 前後移動", "Y-Axis - Front/Back"),
-                "X" => LanguageManager.Get("X 軸 - 左右橫移", "X-Axis - Left/Right"),
+                0 => LanguageManager.Get("Z 軸 - 垂直升降", "Z-Axis - Vertical"),
+                1 => LanguageManager.Get("Y 軸 - 前後移動", "Y-Axis - Front/Back"),
+                2 => LanguageManager.Get("X 軸 - 左右橫移", "X-Axis - Left/Right"),
                 _ => _axis.AxisName
             }
         };
