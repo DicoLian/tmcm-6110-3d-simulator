@@ -4,6 +4,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using Tmcm6110.App.Localization;
+using Tmcm6110.App.Rendering;
 using Tmcm6110.Core.Config;
 using Tmcm6110.Core.Engine;
 using Tmcm6110.Core.Protocol;
@@ -29,7 +30,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public Tmcm6110Controller Controller { get; }
     public TmclSerialServer SerialServer { get; }
 
+    public ObservableCollection<AxisViewModel> AllAxes { get; } = new();
     public ObservableCollection<AxisViewModel> ActiveAxes { get; } = new();
+    public ObservableCollection<SelectableOption<MachineSceneMode>> AvailableSceneModes { get; } = new();
+    public ObservableCollection<SelectableOption<XyOriginPreset>> AvailableXyOrigins { get; } = new();
+    public ObservableCollection<SelectableOption<ZOriginPreset>> AvailableZOrigins { get; } = new();
     public ObservableCollection<string> AvailableComPorts { get; } = new();
     public ObservableCollection<int> AvailableBaudRates { get; } = new() { 9600, 14400, 19200, 28800, 38400, 57600, 115200 };
     public ObservableCollection<PacketLogEntry> PacketLogs { get; } = new();
@@ -52,6 +57,17 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _hidePollingPacketsInLog = true;
     private double _stepsPerMm = 1000.0; // Default: 1000 microsteps = 1.0 mm in 3D view (-100mm..+100mm)
     private long _totalRxPackets;
+    private MachineSceneMode _selectedSceneMode = MachineSceneMode.Gantry3Axis;
+    private XyOriginPreset _selectedXyOrigin = XyOriginPreset.Center;
+    private ZOriginPreset _selectedZOrigin = ZOriginPreset.Center;
+    private bool _syncRfsDirectionWithOrigin;
+    private string _legendTitle = string.Empty;
+    private string _legendLine1 = string.Empty;
+    private string _legendLine2 = string.Empty;
+    private string _legendLine3 = string.Empty;
+    private string _legendLine4 = string.Empty;
+
+    public event Action<MachineSceneMode>? SceneModeChanged;
 
     public string SelectedComPort
     {
@@ -109,12 +125,97 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _stepsPerMm;
         set
         {
-            if (value >= 10)
+            if (value >= 10 && Math.Abs(_stepsPerMm - value) > 1e-6)
             {
                 _stepsPerMm = value;
                 OnPropertyChanged();
+                foreach (var axisVm in AllAxes)
+                    axisVm.ApplyStrokeLimitsToAxis();
             }
         }
+    }
+
+    public MachineSceneMode SelectedSceneMode
+    {
+        get => _selectedSceneMode;
+        set
+        {
+            if (_selectedSceneMode == value) return;
+            _selectedSceneMode = value;
+            OnPropertyChanged();
+            RebuildActiveAxes();
+            foreach (var vm in AllAxes)
+                vm.UpdateAxisTitle(_selectedSceneMode);
+            RefreshLegendTexts();
+            SceneModeChanged?.Invoke(_selectedSceneMode);
+        }
+    }
+
+    public XyOriginPreset SelectedXyOrigin
+    {
+        get => _selectedXyOrigin;
+        set
+        {
+            if (_selectedXyOrigin == value) return;
+            _selectedXyOrigin = value;
+            OnPropertyChanged();
+            ApplyOriginPresets();
+        }
+    }
+
+    public ZOriginPreset SelectedZOrigin
+    {
+        get => _selectedZOrigin;
+        set
+        {
+            if (_selectedZOrigin == value) return;
+            _selectedZOrigin = value;
+            OnPropertyChanged();
+            ApplyOriginPresets();
+        }
+    }
+
+    public bool SyncRfsDirectionWithOrigin
+    {
+        get => _syncRfsDirectionWithOrigin;
+        set
+        {
+            if (_syncRfsDirectionWithOrigin == value) return;
+            _syncRfsDirectionWithOrigin = value;
+            OnPropertyChanged();
+            if (value)
+                ApplyOriginPresets();
+        }
+    }
+
+    public string LegendTitle
+    {
+        get => _legendTitle;
+        set { _legendTitle = value; OnPropertyChanged(); }
+    }
+
+    public string LegendLine1
+    {
+        get => _legendLine1;
+        set { _legendLine1 = value; OnPropertyChanged(); }
+    }
+
+    public string LegendLine2
+    {
+        get => _legendLine2;
+        set { _legendLine2 = value; OnPropertyChanged(); }
+    }
+
+    public string LegendLine3
+    {
+        get => _legendLine3;
+        set { _legendLine3 = value; OnPropertyChanged(); }
+    }
+
+    public string LegendLine4
+    {
+        get => _legendLine4;
+        set { _legendLine4 = value; OnPropertyChanged(); }
     }
 
     public long TotalRxPackets
@@ -148,10 +249,12 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         Controller = new Tmcm6110Controller();
         SerialServer = new TmclSerialServer(Controller);
 
-        // Create ViewModels for the 3 active axes (Axis 0 = Z, Axis 1 = Y, Axis 2 = X)
-        ActiveAxes.Add(new AxisViewModel(Controller.GetAxis(0), Controller));
-        ActiveAxes.Add(new AxisViewModel(Controller.GetAxis(1), Controller));
-        ActiveAxes.Add(new AxisViewModel(Controller.GetAxis(2), Controller));
+        // Create ViewModels for all 6 TMCM-6110 axes; ActiveAxes exposes 3 or 6 depending on SceneMode
+        for (int i = 0; i < Tmcm6110Controller.TotalAxes; i++)
+            AllAxes.Add(new AxisViewModel(Controller.GetAxis(i), Controller, () => StepsPerMm));
+
+        InitializeSelectableOptions();
+        RebuildActiveAxes();
 
         Controller.PacketProcessed += OnControllerPacketProcessed;
         SerialServer.StatusLogMessage += OnServerStatusLogMessage;
@@ -228,13 +331,191 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshLocalizedTexts();
     }
 
+    private void InitializeSelectableOptions()
+    {
+        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.Gantry3Axis, string.Empty));
+        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.DualGantry6Axis, string.Empty));
+        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.GantryRotaryAux6Axis, string.Empty));
+        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.RobotArm6Dof, string.Empty));
+        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.LinearBench6Axis, string.Empty));
+
+        AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.Center, string.Empty));
+        AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.FrontLeft, string.Empty));
+        AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.BackLeft, string.Empty));
+        AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.FrontRight, string.Empty));
+        AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.BackRight, string.Empty));
+
+        AvailableZOrigins.Add(new SelectableOption<ZOriginPreset>(ZOriginPreset.Center, string.Empty));
+        AvailableZOrigins.Add(new SelectableOption<ZOriginPreset>(ZOriginPreset.Top, string.Empty));
+        AvailableZOrigins.Add(new SelectableOption<ZOriginPreset>(ZOriginPreset.Bottom, string.Empty));
+    }
+
+    private void RebuildActiveAxes()
+    {
+        int count = _selectedSceneMode == MachineSceneMode.Gantry3Axis ? 3 : Tmcm6110Controller.TotalAxes;
+        ActiveAxes.Clear();
+        for (int i = 0; i < count && i < AllAxes.Count; i++)
+            ActiveAxes.Add(AllAxes[i]);
+    }
+
+    private void ApplyOriginPresets()
+    {
+        ApplyXyOriginToAxisPair(xIdx: 2, yIdx: 1);
+        ApplyZOriginToAxis(zIdx: 0);
+
+        if (_selectedSceneMode == MachineSceneMode.DualGantry6Axis)
+        {
+            ApplyXyOriginToAxisPair(xIdx: 5, yIdx: 4);
+            ApplyZOriginToAxis(zIdx: 3);
+        }
+    }
+
+    private void ApplyXyOriginToAxisPair(int xIdx, int yIdx)
+    {
+        var axX = AllAxes[xIdx];
+        var axY = AllAxes[yIdx];
+        double lenX = axX.StrokeLengthMm;
+        double lenY = axY.StrokeLengthMm;
+
+        (double minX, double maxX) = _selectedXyOrigin switch
+        {
+            XyOriginPreset.FrontLeft or XyOriginPreset.BackLeft => (0.0, lenX),
+            XyOriginPreset.FrontRight or XyOriginPreset.BackRight => (-lenX, 0.0),
+            _ => (-lenX * 0.5, lenX * 0.5)
+        };
+
+        (double minY, double maxY) = _selectedXyOrigin switch
+        {
+            XyOriginPreset.FrontLeft or XyOriginPreset.FrontRight => (0.0, lenY),
+            XyOriginPreset.BackLeft or XyOriginPreset.BackRight => (-lenY, 0.0),
+            _ => (-lenY * 0.5, lenY * 0.5)
+        };
+
+        axX.SetStrokeLimitsMm(minX, maxX);
+        axY.SetStrokeLimitsMm(minY, maxY);
+
+        if (_syncRfsDirectionWithOrigin)
+        {
+            SetRfsModeForOrigin(xIdx, maxX <= 0.0 ? 65 : 1);
+            SetRfsModeForOrigin(yIdx, maxY <= 0.0 ? 65 : 1);
+        }
+    }
+
+    private void ApplyZOriginToAxis(int zIdx)
+    {
+        var axZ = AllAxes[zIdx];
+        double lenZ = axZ.StrokeLengthMm;
+
+        (double minZ, double maxZ) = _selectedZOrigin switch
+        {
+            ZOriginPreset.Top => (-lenZ, 0.0),
+            ZOriginPreset.Bottom => (0.0, lenZ),
+            _ => (-lenZ * 0.5, lenZ * 0.5)
+        };
+
+        axZ.SetStrokeLimitsMm(minZ, maxZ);
+
+        if (_syncRfsDirectionWithOrigin)
+            SetRfsModeForOrigin(zIdx, maxZ <= 0.0 ? 65 : 1);
+    }
+
+    private void SetRfsModeForOrigin(int axisIndex, int rfsMode)
+    {
+        Controller.ProcessCommand(new TmclCommandPacket(
+            ModuleAddress, (byte)TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, (byte)axisIndex, rfsMode));
+    }
+
     private void RefreshLocalizedTexts()
     {
         OnPropertyChanged(nameof(ConnectButtonText));
         RefreshConnectionStatusText();
         RefreshLoadedConfigSummary();
-        foreach (var vm in ActiveAxes)
-            vm.UpdateAxisTitle();
+        RefreshOptionLabels();
+        RefreshLegendTexts();
+        foreach (var vm in AllAxes)
+            vm.UpdateAxisTitle(_selectedSceneMode);
+    }
+
+    private void RefreshOptionLabels()
+    {
+        foreach (var opt in AvailableSceneModes)
+        {
+            opt.Label = opt.Value switch
+            {
+                MachineSceneMode.Gantry3Axis => LanguageManager.Get("3 軸龍門（預設 Z/Y/X）", "3-Axis Gantry (Default Z/Y/X)"),
+                MachineSceneMode.DualGantry6Axis => LanguageManager.Get("6 軸雙龍門（雙工位 Z1/Y1/X1 + Z2/Y2/X2）", "6-Axis Dual Gantry (Stations 1 & 2)"),
+                MachineSceneMode.GantryRotaryAux6Axis => LanguageManager.Get("6 軸龍門 + 旋轉/輔助軸 (XYZ + R/A/B)", "6-Axis Gantry + Rotary/Aux (XYZ + R/A/B)"),
+                MachineSceneMode.RobotArm6Dof => LanguageManager.Get("6 軸關節機械手臂 (J1~J6)", "6-Axis Robot Arm (J1-J6)"),
+                MachineSceneMode.LinearBench6Axis => LanguageManager.Get("6 軸獨立線性測試台 (Ch 0~5)", "6-Axis Linear Test Bench (Ch 0-5)"),
+                _ => opt.Value.ToString()
+            };
+        }
+
+        foreach (var opt in AvailableXyOrigins)
+        {
+            opt.Label = opt.Value switch
+            {
+                XyOriginPreset.Center => LanguageManager.Get("工作台中心 Center (0, 0)", "Table Center (0, 0)"),
+                XyOriginPreset.FrontLeft => LanguageManager.Get("左下角 Front-Left (-X, -Y)", "Front-Left Corner (-X, -Y)"),
+                XyOriginPreset.BackLeft => LanguageManager.Get("左上角 Back-Left (-X, +Y)", "Back-Left Corner (-X, +Y)"),
+                XyOriginPreset.FrontRight => LanguageManager.Get("右下角 Front-Right (+X, -Y)", "Front-Right Corner (+X, -Y)"),
+                XyOriginPreset.BackRight => LanguageManager.Get("右上角 Back-Right (+X, +Y)", "Back-Right Corner (+X, +Y)"),
+                _ => opt.Value.ToString()
+            };
+        }
+
+        foreach (var opt in AvailableZOrigins)
+        {
+            opt.Label = opt.Value switch
+            {
+                ZOriginPreset.Center => LanguageManager.Get("Z 軸中心 Center (-Lz/2 ~ +Lz/2)", "Center (-Lz/2 ~ +Lz/2)"),
+                ZOriginPreset.Top => LanguageManager.Get("頂部 Top (+Z 工業標準 -Lz ~ 0)", "Top (+Z Industrial -Lz ~ 0)"),
+                ZOriginPreset.Bottom => LanguageManager.Get("底部 Bottom (-Z 工作台面 0 ~ +Lz)", "Bottom (-Z Table 0 ~ +Lz)"),
+                _ => opt.Value.ToString()
+            };
+        }
+    }
+
+    private void RefreshLegendTexts()
+    {
+        switch (_selectedSceneMode)
+        {
+            case MachineSceneMode.DualGantry6Axis:
+                LegendTitle = LanguageManager.Get("3D 雙龍門雙工位視圖 (6 軸)", "3D Dual-Gantry Dual-Station (6-Axis)");
+                LegendLine1 = LanguageManager.Get("• 左站 (Axis 0~2): Z1 藍 / Y1 綠 / X1 紅", "• Left Station (Axis 0-2): Z1 / Y1 / X1");
+                LegendLine2 = LanguageManager.Get("• 右站 (Axis 3~5): Z2 青 / Y2 藍綠 / X2 紫", "• Right Station (Axis 3-5): Z2 / Y2 / X2");
+                LegendLine3 = LanguageManager.Get("• 白點三色標 = 各站機械原點 (0, 0)", "• White Marker = Station Origin (0, 0)");
+                LegendLine4 = LanguageManager.Get("• 金色 / 青色光帶 = 左站 / 右站 TCP 軌跡", "• Gold / Cyan Ribbon = Station 1 / 2 Trails");
+                break;
+            case MachineSceneMode.GantryRotaryAux6Axis:
+                LegendTitle = LanguageManager.Get("3D 龍門 + 旋轉/輔助視圖 (6 軸)", "3D Gantry + Rotary/Aux Stage (6-Axis)");
+                LegendLine1 = LanguageManager.Get("• 龍門主軸 (Axis 0~2): Z 藍 / Y 綠 / X 紅", "• Main Gantry (Axis 0-2): Z / Y / X");
+                LegendLine2 = LanguageManager.Get("• Axis 3 (R) = 主軸旋轉 | Axis 4 (A) = 轉盤", "• Axis 3 (R) = Spindle | Axis 4 (A) = Table");
+                LegendLine3 = LanguageManager.Get("• Axis 5 (B) = 右側靛色輔助供料滑台", "• Axis 5 (B) = Indigo Aux Feeder Slide");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = 3D 工具尖端 (TCP) 軌跡", "• Gold Ribbon = 3D Tool Center Point Trail");
+                break;
+            case MachineSceneMode.RobotArm6Dof:
+                LegendTitle = LanguageManager.Get("3D 六軸關節機械手臂 (J1~J6)", "3D 6-DOF Articulated Robot Arm (J1-J6)");
+                LegendLine1 = LanguageManager.Get("• J1 (Axis 0) 底座 | J2 (Axis 1) 肩 | J3 (Axis 2) 肘", "• J1 (Axis 0) Base | J2 (Axis 1) Shoulder | J3 (Axis 2) Elbow");
+                LegendLine2 = LanguageManager.Get("• J4 (Axis 3) 前臂 | J5 (Axis 4) 腕 | J6 (Axis 5) 法蘭", "• J4 (Axis 3) Forearm | J5 (Axis 4) Wrist | J6 (Axis 5) Flange");
+                LegendLine3 = LanguageManager.Get("• 關節行程對應各軸 ±Limit 範圍 (-100%~+100%)", "• Joint angles map linearly across axis ±Limit span");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = 手臂法蘭 TCP 空間軌跡", "• Gold Ribbon = Flange TCP 3D Trajectory");
+                break;
+            case MachineSceneMode.LinearBench6Axis:
+                LegendTitle = LanguageManager.Get("3D 六軸線性測試台 (Ch 0~5)", "3D 6-Axis Linear Test Bench (Ch 0-5)");
+                LegendLine1 = LanguageManager.Get("• 6 條並排滑軌分別對應 Motor #0 ~ #5", "• 6 Parallel Rails mapped to Motor #0 - #5");
+                LegendLine2 = LanguageManager.Get("• 中央灰藍橫條 = 0 mm 原點參考線", "• Center Blue-Gray Bar = 0 mm Reference Line");
+                LegendLine3 = LanguageManager.Get("• 滑軌兩端 LED = 獨立 -Limit / +Limit 狀態", "• Rail End LEDs = Independent -Limit / +Limit");
+                LegendLine4 = LanguageManager.Get("• 適用全 6 軸通訊與極限批量驗證", "• Ideal for 6-axis protocol & limit testing");
+                break;
+            default:
+                LegendTitle = LanguageManager.Get("3D 龍門機構動態視圖 (Z-Y-X 映射)", "3D Gantry Stage Live View (Z-Y-X Mapping)");
+                LegendLine1 = LanguageManager.Get("• 藍色垂直主軸 = Motor #0 (Z 軸 - 升降)", "• Blue Vertical Spindle = Motor #0 (Z-Axis)");
+                LegendLine2 = LanguageManager.Get("• 綠色前後龍門 = Motor #1 (Y 軸 - 前後)", "• Green Gantry Bridge = Motor #1 (Y-Axis)");
+                LegendLine3 = LanguageManager.Get("• 紅色左右橫移 = Motor #2 (X 軸 - 左右)", "• Red Cross Carriage = Motor #2 (X-Axis)");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = TCP 軌跡 | 白點 = 機械原點 (0,0)", "• Gold Trail = TCP | White Cube = Origin (0,0)");
+                break;
+        }
     }
 
     private void RefreshConnectionStatusText()
@@ -287,7 +568,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!string.IsNullOrEmpty(labelPath))
             {
                 TmcmConfigLoader.LoadAxisLabelsFromFile(labelPath, Controller);
-                foreach (var vm in ActiveAxes) vm.UpdateAxisTitle();
+                foreach (var vm in AllAxes) vm.UpdateAxisTitle(_selectedSceneMode);
             }
 
             string? iniPath = FindFirstFileUpwards(baseDir, "*.ini");
@@ -361,7 +642,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             else if (ext == ".txt")
             {
                 TmcmConfigLoader.LoadAxisLabelsFromFile(filePath, Controller);
-                foreach (var vm in ActiveAxes) vm.UpdateAxisTitle();
+                foreach (var vm in AllAxes) vm.UpdateAxisTitle(_selectedSceneMode);
                 _configSource = ConfigSourceKind.ManualMapping;
                 _loadedConfigFileName = Path.GetFileName(filePath);
             }
@@ -381,33 +662,53 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Demo macro: Executes a 3D Coordinated Interpolated Move (MVP COORD, $47) across Z, Y, X axes
+    /// Demo macro: Executes a multi-axis Coordinated Interpolated Move (MVP COORD, 0x40|mask)
+    /// across all currently active axes using normalized stroke waypoints (safe for Center &amp; Corner origins),
     /// and arms Command 138 Position Reached Notification.
     /// </summary>
-    public void ExecuteDemo3DInterpolatedMove(int targetZ, int targetY, int targetX)
+    public void ExecuteDemoInterpolatedStep(int stepIndex)
     {
-        // 1. Store Coordinate #1 for Axis 0 (Z), Axis 1 (Y), Axis 2 (X)
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.SCO, 1, 0, targetZ));
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.SCO, 1, 1, targetY));
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.SCO, 1, 2, targetX));
+        double[][] waypoints =
+        [
+            [0.85, 0.82, 0.85, 0.20, 0.80, 0.25],
+            [0.25, 0.82, 0.15, 0.80, 0.20, 0.75],
+            [0.72, 0.18, 0.15, 0.30, 0.20, 0.80],
+            [0.18, 0.18, 0.85, 0.75, 0.80, 0.20],
+            [0.50, 0.50, 0.50, 0.50, 0.50, 0.50]
+        ];
 
-        // 2. Execute MVP COORD, $47 (Bit 6 = Interpolated + Bits 0,1,2 = Axes 0,1,2), Coordinate #1
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MVP, 2, 0x47, 1));
+        double[] frac = waypoints[stepIndex % waypoints.Length];
+        int mask = 0;
 
-        // 3. Arm Command 138 (Request Target Position Reached Event for Axes 0,1,2 -> Mask = 0x07)
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RequestTargetPositionReachedEvent, 0, 0, 0x07));
+        foreach (var axVm in ActiveAxes)
+        {
+            int idx = axVm.AxisIndex;
+            var snap = Controller.GetAxis(idx).GetSnapshot();
+            double minS = snap.VirtualMinStrokeSteps;
+            double maxS = snap.VirtualMaxStrokeSteps;
+            int targetPos = (int)Math.Round(minS + (maxS - minS) * frac[idx]);
+
+            Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.SCO, 1, (byte)idx, targetPos));
+            mask |= (1 << idx);
+        }
+
+        if (mask == 0) return;
+
+        byte coordMotMask = (byte)(0x40 | mask);
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MVP, 2, coordMotMask, 1));
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RequestTargetPositionReachedEvent, 0, 0, mask));
     }
 
     public void StopAllAxes()
     {
-        for (byte i = 0; i < 3; i++)
-            Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MST, 0, i, 0));
+        foreach (var axVm in ActiveAxes)
+            Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MST, 0, (byte)axVm.AxisIndex, 0));
     }
 
     public void HomeAllAxes()
     {
-        for (byte i = 0; i < 3; i++)
-            Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RFS, 0, i, 0));
+        foreach (var axVm in ActiveAxes)
+            Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RFS, 0, (byte)axVm.AxisIndex, 0));
     }
 
     public void ClearAllAlarms()

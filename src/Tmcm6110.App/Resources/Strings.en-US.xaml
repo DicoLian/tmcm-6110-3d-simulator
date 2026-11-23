@@ -46,6 +46,29 @@
     <sys:String x:Key="TipRfsHome">Start Reference Search (Param #193)</sys:String>
     <sys:String x:Key="TipZeroPos">Set Actual Position (#1) to 0</sys:String>
 
+    <sys:String x:Key="LblStrokeRange">Stroke (mm):</sys:String>
+    <sys:String x:Key="LblMinLimit">-Limit:</sys:String>
+    <sys:String x:Key="LblMaxLimit">+Limit:</sys:String>
+    <sys:String x:Key="TipMinLimitMm">Set -Limit auto-trigger position (mm); press Enter or unfocus to apply</sys:String>
+    <sys:String x:Key="TipMaxLimitMm">Set +Limit auto-trigger position (mm); press Enter or unfocus to apply</sys:String>
+    <sys:String x:Key="ChkLimitStop">Limit Stop (#12/#13=0)</sys:String>
+    <sys:String x:Key="ChkLimitStopShort">Limit Stop (#12/#13)</sys:String>
+    <sys:String x:Key="TipLimitStop">Stop motor automatically when +Limit / -Limit triggers (TMCL #12/#13 = 0)</sys:String>
+
+    <sys:String x:Key="TabAxesControl">Axes Monitor &amp; Control</sys:String>
+    <sys:String x:Key="TabSettings">Machine &amp; System Settings</sys:String>
+    <sys:String x:Key="GrpMachineOrigin">3D Machine Mode &amp; Origin Position</sys:String>
+    <sys:String x:Key="LblSceneMode">3D Machine Mode:</sys:String>
+    <sys:String x:Key="LblXyOrigin">XY Machine Origin:</sys:String>
+    <sys:String x:Key="LblZOrigin">Z-Axis Origin:</sys:String>
+    <sys:String x:Key="ChkSyncRfsOrigin">Sync RFS homing direction (#193) when changing origin</sys:String>
+    <sys:String x:Key="GrpStrokeLimits">Per-Axis Travel Stroke &amp; Limit Stop (mm)</sys:String>
+    <sys:String x:Key="LblStepsPerMm">Steps/mm Scale:</sys:String>
+    <sys:String x:Key="GrpTmclAddressing">TMCL Node Addressing &amp; Transport</sys:String>
+    <sys:String x:Key="LblTcpServerInfo">Zero-driver TCP Server: 127.0.0.1:4001 (Auto-started)</sys:String>
+    <sys:String x:Key="GrpConfigAndUi">Configuration File &amp; UI Language</sys:String>
+    <sys:String x:Key="LblLanguageSetting">Display Language:</sys:String>
+
     <sys:String x:Key="ChkForcePosLimit">Force +Limit (#10)</sys:String>
     <sys:String x:Key="ChkForceNegLimit">Force -Limit (#11/#9)</sys:String>
     <sys:String x:Key="BtnToggleAlarm">Inject / Clear Alarm (#207/#208)</sys:String>

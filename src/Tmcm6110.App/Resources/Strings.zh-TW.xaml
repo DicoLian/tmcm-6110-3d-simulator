@@ -46,6 +46,29 @@
     <sys:String x:Key="TipRfsHome">依 Param #193 執行原點搜尋</sys:String>
     <sys:String x:Key="TipZeroPos">將當前實際位置 (#1) 設為 0</sys:String>
 
+    <sys:String x:Key="LblStrokeRange">行程範圍 (mm):</sys:String>
+    <sys:String x:Key="LblMinLimit">-Limit:</sys:String>
+    <sys:String x:Key="LblMaxLimit">+Limit:</sys:String>
+    <sys:String x:Key="TipMinLimitMm">設定 -Limit 自動觸發位置 (mm)，按 Enter 或移開焦點套用</sys:String>
+    <sys:String x:Key="TipMaxLimitMm">設定 +Limit 自動觸發位置 (mm)，按 Enter 或移開焦點套用</sys:String>
+    <sys:String x:Key="ChkLimitStop">極限停機保護 (#12/#13=0)</sys:String>
+    <sys:String x:Key="ChkLimitStopShort">極限停機 (#12/#13)</sys:String>
+    <sys:String x:Key="TipLimitStop">勾選後觸發 +Limit / -Limit 時馬達會自動停機；取消則僅亮燈號不停機 (TMCL #12/#13)</sys:String>
+
+    <sys:String x:Key="TabAxesControl">軸向監控與控制</sys:String>
+    <sys:String x:Key="TabSettings">機台與系統設定</sys:String>
+    <sys:String x:Key="GrpMachineOrigin">3D 機構模式與原點位置</sys:String>
+    <sys:String x:Key="LblSceneMode">3D 機構模式:</sys:String>
+    <sys:String x:Key="LblXyOrigin">XY 機械原點:</sys:String>
+    <sys:String x:Key="LblZOrigin">Z 軸原點:</sys:String>
+    <sys:String x:Key="ChkSyncRfsOrigin">切換原點時同步更新 RFS 原點搜尋方向 (#193)</sys:String>
+    <sys:String x:Key="GrpStrokeLimits">各軸移動行程與極限開關 (mm)</sys:String>
+    <sys:String x:Key="LblStepsPerMm">Steps/mm 換算:</sys:String>
+    <sys:String x:Key="GrpTmclAddressing">TMCL 節點位址與傳輸資訊</sys:String>
+    <sys:String x:Key="LblTcpServerInfo">免驅動 TCP 監聽: 127.0.0.1:4001 (自動啟動)</sys:String>
+    <sys:String x:Key="GrpConfigAndUi">設定檔載入與介面語系</sys:String>
+    <sys:String x:Key="LblLanguageSetting">顯示語言:</sys:String>
+
     <sys:String x:Key="ChkForcePosLimit">強制觸發 +Limit (#10)</sys:String>
     <sys:String x:Key="ChkForceNegLimit">強制觸發 -Limit (#11/#9)</sys:String>
     <sys:String x:Key="BtnToggleAlarm">注入 / 清除 Alarm (#207/#208)</sys:String>

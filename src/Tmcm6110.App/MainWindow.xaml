@@ -15,17 +15,43 @@
         <conv:BoolToColorConverter x:Key="BlueLedConverter" TrueColor="#29B6F6" FalseColor="#2B3240"/>
         <conv:BoolToColorConverter x:Key="RedLedConverter" TrueColor="#FF1744" FalseColor="#2B3240"/>
         <conv:BoolToColorConverter x:Key="AmberLedConverter" TrueColor="#FF9100" FalseColor="#2B3240"/>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="#9AA5B8"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Border x:Name="Bd" Background="#1A202B" BorderBrush="#2F384A" BorderThickness="1,1,1,0" CornerRadius="5,5,0,0" Padding="14,6" Margin="0,0,4,0">
+                            <ContentPresenter ContentSource="Header" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="#ECF0F6"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#252E3F"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#4FC3F7"/>
+                                <Setter Property="Foreground" Value="#4FC3F7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="215"/>
+            <RowDefinition Height="195"/>
         </Grid.RowDefinitions>
 
-        <!-- ==================== TOP BAR: SERIAL PORT & CONFIG ==================== -->
-        <Border Grid.Row="0" Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,8" Margin="0,0,0,8">
+        <!-- ==================== TOP BAR: COM PORT CONNECTION & QUICK MOTION ACTIONS ==================== -->
+        <Border Grid.Row="0" Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="10,6" Margin="0,0,0,8">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
@@ -34,50 +60,39 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{DynamicResource AppHeaderTitle}" FontSize="17" FontWeight="Bold" Foreground="#4FC3F7" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                    <TextBlock Text="{DynamicResource AppHeaderTitle}" FontSize="16" FontWeight="Bold" Foreground="#4FC3F7" VerticalAlignment="Center" Margin="0,0,12,0"/>
 
-                    <TextBlock Text="COM Port:" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="4,0"/>
-                    <ComboBox Width="96" ItemsSource="{Binding AvailableComPorts}" SelectedItem="{Binding SelectedComPort}" VerticalContentAlignment="Center" Margin="2,0"/>
-                    <Button Content="{DynamicResource BtnRescan}" Click="BtnRefreshPorts_Click" Padding="6,3" Margin="2,0,10,0"/>
+                    <TextBlock Text="COM:" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="2,0,4,0"/>
+                    <ComboBox Width="84" ItemsSource="{Binding AvailableComPorts}" SelectedItem="{Binding SelectedComPort}" VerticalContentAlignment="Center" Margin="2,0"/>
+                    <Button Content="{DynamicResource BtnRescan}" Click="BtnRefreshPorts_Click" Padding="6,3" Margin="2,0,8,0"/>
 
-                    <TextBlock Text="Baud:" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="4,0"/>
-                    <ComboBox Width="86" ItemsSource="{Binding AvailableBaudRates}" SelectedItem="{Binding SelectedBaudRate}" VerticalContentAlignment="Center" Margin="2,0,10,0"/>
+                    <TextBlock Text="Baud:" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="2,0,4,0"/>
+                    <ComboBox Width="78" ItemsSource="{Binding AvailableBaudRates}" SelectedItem="{Binding SelectedBaudRate}" VerticalContentAlignment="Center" Margin="2,0,8,0"/>
 
-                    <TextBlock Text="ModAddr(#66):" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="4,0"/>
-                    <TextBox Width="36" Text="{Binding ModuleAddress, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,8,0"/>
-
-                    <TextBlock Text="HostAddr(#76):" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="4,0"/>
-                    <TextBox Width="36" Text="{Binding HostAddress, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,10,0"/>
-
-                    <Button Content="{Binding ConnectButtonText}" Click="BtnToggleSerial_Click" Background="#1565C0" BorderBrush="#42A5F5" Padding="12,4"/>
+                    <Button Content="{Binding ConnectButtonText}" Click="BtnToggleSerial_Click" Background="#1565C0" BorderBrush="#42A5F5" Padding="10,4"/>
                 </StackPanel>
 
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="16,0">
-                    <StackPanel Orientation="Horizontal">
-                        <Ellipse Width="10" Height="10" Fill="{Binding ConnectionStatusColor}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                        <TextBlock Text="{Binding ConnectionStatusText}" FontWeight="SemiBold" Foreground="#ECF0F6"/>
-                    </StackPanel>
-                    <TextBlock Text="{Binding LoadedConfigSummary}" FontSize="11.5" Foreground="#9AA5B8" Margin="0,2,0,0"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="12,0" ToolTip="{Binding ConnectionStatusText}">
+                    <Ellipse Width="10" Height="10" Fill="{Binding ConnectionStatusColor}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                    <TextBlock Text="{Binding ConnectionStatusText}" FontWeight="SemiBold" Foreground="#ECF0F6" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
                 </StackPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="{DynamicResource BtnLoadConfig}" Click="BtnLoadConfig_Click" Padding="10,4"/>
-                    <Button Content="{DynamicResource BtnDemoInterp}" Click="BtnDemoInterpolation_Click" Background="#4A148C" BorderBrush="#AB47BC" Padding="10,4"/>
-                    <Button Content="{DynamicResource BtnHomeAll}" Click="BtnHomeAll_Click" Background="#E65100" BorderBrush="#FFA726" Padding="10,4"/>
-                    <Button Content="{DynamicResource BtnStopAll}" Click="BtnStopAll_Click" Background="#B71C1C" BorderBrush="#EF5350" Padding="10,4"/>
-                    <Button Content="{DynamicResource BtnToggleLanguage}" ToolTip="{DynamicResource TipToggleLanguage}" Click="BtnToggleLanguage_Click" Background="#263238" BorderBrush="#4FC3F7" Padding="10,4" Margin="6,2,2,2"/>
+                    <Button Content="{DynamicResource BtnDemoInterp}" Click="BtnDemoInterpolation_Click" Background="#4A148C" BorderBrush="#AB47BC" Padding="9,4"/>
+                    <Button Content="{DynamicResource BtnHomeAll}" Click="BtnHomeAll_Click" Background="#E65100" BorderBrush="#FFA726" Padding="9,4"/>
+                    <Button Content="{DynamicResource BtnStopAll}" Click="BtnStopAll_Click" Background="#B71C1C" BorderBrush="#EF5350" Padding="9,4"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- ==================== CENTER: 3D GANTRY VIEWPORT (LEFT) + 3-AXIS DASHBOARD (RIGHT) ==================== -->
+        <!-- ==================== CENTER: 3D VIEWPORT (LEFT) + TABBED DASHBOARD/SETTINGS (RIGHT) ==================== -->
         <Grid Grid.Row="1" Margin="0,0,0,8">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="1.15*"/>
-                <ColumnDefinition Width="1.25*"/>
+                <ColumnDefinition Width="1.05*"/>
+                <ColumnDefinition Width="1.35*"/>
             </Grid.ColumnDefinitions>
 
-            <!-- LEFT: 3D XYZ STAGE VIEWPORT -->
+            <!-- LEFT: 3D MACHINE VIEWPORT -->
             <Border Grid.Column="0" Background="#10141C" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Margin="0,0,8,0" ClipToBounds="True">
                 <Grid>
                     <Viewport3D x:Name="MainViewport3D" ClipToBounds="True"
@@ -97,24 +112,22 @@
                             MouseUp="Viewport3D_MouseUp"
                             MouseWheel="Viewport3D_MouseWheel"/>
 
-                    <!-- Top-Left 3D Legend Overlay -->
+                    <!-- Top-Left 3D Legend Overlay (updates dynamically with selected SceneMode) -->
                     <Border HorizontalAlignment="Left" VerticalAlignment="Top" Background="#CC1A202C" BorderBrush="#3E4C63" BorderThickness="1" CornerRadius="5" Padding="10,8" Margin="10" IsHitTestVisible="False">
                         <StackPanel>
-                            <TextBlock Text="{DynamicResource LegendTitle}" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,4"/>
-                            <TextBlock Text="{DynamicResource LegendAxisZ}" Foreground="#64B5F6" FontSize="12"/>
-                            <TextBlock Text="{DynamicResource LegendAxisY}" Foreground="#81C784" FontSize="12"/>
-                            <TextBlock Text="{DynamicResource LegendAxisX}" Foreground="#E57373" FontSize="12"/>
-                            <TextBlock Text="{DynamicResource LegendTrail}" Foreground="#FFD54F" FontSize="12"/>
+                            <TextBlock Text="{Binding LegendTitle}" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,4"/>
+                            <TextBlock Text="{Binding LegendLine1}" Foreground="#64B5F6" FontSize="11.5"/>
+                            <TextBlock Text="{Binding LegendLine2}" Foreground="#81C784" FontSize="11.5"/>
+                            <TextBlock Text="{Binding LegendLine3}" Foreground="#E57373" FontSize="11.5"/>
+                            <TextBlock Text="{Binding LegendLine4}" Foreground="#FFD54F" FontSize="11.5"/>
                             <TextBlock Text="{DynamicResource LegendMouseHint}" Foreground="#9AA5B8" FontSize="11" Margin="0,4,0,0"/>
                         </StackPanel>
                     </Border>
 
-                    <!-- Bottom-Left Live 3D Coordinate Readout & Controls -->
-                    <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="#CC1A202C" BorderBrush="#3E4C63" BorderThickness="1" CornerRadius="5" Padding="8,6" Margin="10">
+                    <!-- Bottom-Left Live 3D Coordinate Readout & Camera Controls -->
+                    <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Background="#CC1A202C" BorderBrush="#3E4C63" BorderThickness="1" CornerRadius="5" Padding="8,5" Margin="10">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock x:Name="Txt3DCoordOverlay" Text="TCP: X=0.00 mm, Y=0.00 mm, Z=0.00 mm" VerticalAlignment="Center" FontFamily="Consolas" FontSize="13" Foreground="#00E676" Margin="0,0,12,0"/>
-                            <TextBlock Text="Steps/mm:" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="4,0"/>
-                            <TextBox Width="52" Text="{Binding StepsPerMm, UpdateSourceTrigger=PropertyChanged}" Margin="2,0,8,0"/>
+                            <TextBlock x:Name="Txt3DCoordOverlay" Text="TCP: X=0.00 mm, Y=0.00 mm, Z=0.00 mm" VerticalAlignment="Center" FontFamily="Consolas" FontSize="12.5" Foreground="#00E676" Margin="0,0,10,0"/>
                             <Button Content="{DynamicResource BtnClearTrail}" Click="BtnClearTrail_Click" Padding="8,2"/>
                             <Button Content="{DynamicResource BtnResetCamera}" Click="BtnResetCamera_Click" Padding="8,2"/>
                         </StackPanel>
@@ -122,155 +135,282 @@
                 </Grid>
             </Border>
 
-            <!-- RIGHT: 3-AXIS TELEMETRY, STATUS LEDS, LIMIT & ALARM INJECTION -->
-            <ItemsControl Grid.Column="1" ItemsSource="{Binding ActiveAxes}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <UniformGrid Rows="3" Columns="1"/>
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="10,7" Margin="0,0,0,6">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                </Grid.RowDefinitions>
+            <!-- RIGHT: TABBED AXES MONITOR & MACHINE SETTINGS -->
+            <TabControl Grid.Column="1" Background="#141820" BorderBrush="#2F384A" BorderThickness="1" Padding="6">
+                <!-- TAB 1: AXES TELEMETRY & MANUAL MOTION (with ScrollViewer for 3 or 6 axes) -->
+                <TabItem Header="{DynamicResource TabAxesControl}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,2,4,0">
+                        <ItemsControl ItemsSource="{Binding ActiveAxes}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="10,6" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
 
-                                <!-- Row 0: Axis Header + State Badge + 5 Status Indicator Lamps -->
-                                <Grid Grid.Row="0" Margin="0,0,0,6">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
+                                            <!-- Row 0: Axis Header + State Badge + Stroke Range + 5 Status Indicator Lamps -->
+                                            <Grid Grid.Row="0" Margin="0,0,0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                    <TextBlock Grid.Column="0" Text="{Binding AxisTitle}" FontSize="15" FontWeight="Bold" Foreground="#ECF0F6" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                                <TextBlock Grid.Column="0" Text="{Binding AxisTitle}" FontSize="14.5" FontWeight="Bold" Foreground="#ECF0F6" VerticalAlignment="Center" Margin="0,0,10,0"/>
 
-                                    <Border Grid.Column="1" Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding StatusBadgeText}" FontSize="11.5" FontWeight="Bold" Foreground="White"/>
-                                    </Border>
+                                                <Border Grid.Column="1" Background="{Binding StatusBadgeColor}" CornerRadius="4" Padding="7,2" VerticalAlignment="Center" Margin="0,0,8,0">
+                                                    <TextBlock Text="{Binding StatusBadgeText}" FontSize="11" FontWeight="Bold" Foreground="White"/>
+                                                </Border>
 
-                                    <!-- 5 Status LEDs: PosReached, Move, +Limit, -Limit, Alarm -->
-                                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                                        <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="2,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="10" Height="10" Fill="{Binding IsPosReached, Converter={StaticResource GreenLedConverter}}" Margin="0,0,5,0"/>
-                                                <TextBlock Text="{DynamicResource LedPosReached}" FontSize="11.5"/>
+                                                <TextBlock Grid.Column="2" Text="{Binding ShortStrokeBadge}" FontFamily="Consolas" FontSize="11" Foreground="#9AA5B8" VerticalAlignment="Center"/>
+
+                                                <!-- 5 Status LEDs: PosReached, Move, +Limit, -Limit, Alarm -->
+                                                <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                                    <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="5,2" Margin="2,0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="9" Height="9" Fill="{Binding IsPosReached, Converter={StaticResource GreenLedConverter}}" Margin="0,0,4,0"/>
+                                                            <TextBlock Text="{DynamicResource LedPosReached}" FontSize="11"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="5,2" Margin="2,0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="9" Height="9" Fill="{Binding IsMoving, Converter={StaticResource BlueLedConverter}}" Margin="0,0,4,0"/>
+                                                            <TextBlock Text="{DynamicResource LedMove}" FontSize="11"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="5,2" Margin="2,0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="9" Height="9" Fill="{Binding IsRightLimit, Converter={StaticResource AmberLedConverter}}" Margin="0,0,4,0"/>
+                                                            <TextBlock Text="{DynamicResource LedPosLimit}" FontSize="11"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="5,2" Margin="2,0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="9" Height="9" Fill="{Binding IsLeftLimit, Converter={StaticResource AmberLedConverter}}" Margin="0,0,4,0"/>
+                                                            <TextBlock Text="{DynamicResource LedNegLimit}" FontSize="11"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                    <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="5,2" Margin="2,0">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="9" Height="9" Fill="{Binding IsAlarm, Converter={StaticResource RedLedConverter}}" Margin="0,0,4,0"/>
+                                                            <TextBlock Text="{DynamicResource LedAlarm}" FontSize="11" FontWeight="Bold"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <!-- Row 1: Numerical Telemetry Readouts -->
+                                            <UniformGrid Grid.Row="1" Columns="6" Margin="0,0,0,5">
+                                                <Border Background="#141820" CornerRadius="4" Padding="5,3" Margin="2">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{DynamicResource LblActualPos}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                        <TextBlock Text="{Binding ActualPosition}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#00E676"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Background="#141820" CornerRadius="4" Padding="5,3" Margin="2">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{DynamicResource LblTargetPos}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                        <TextBlock Text="{Binding TargetPosition}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Background="#141820" CornerRadius="4" Padding="5,3" Margin="2">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{DynamicResource LblMechPosMm}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                        <TextBlock Text="{Binding PositionMm, StringFormat={}{0:F2} mm}" FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="#FFD54F"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Background="#141820" CornerRadius="4" Padding="5,3" Margin="2">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{DynamicResource LblSpeed}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                        <TextBlock FontFamily="Consolas" FontSize="12.5" FontWeight="Bold" Foreground="#ECF0F6">
+                                                            <Run Text="{Binding ActualSpeed}"/><Run Text=" / " Foreground="#9AA5B8"/><Run Text="{Binding MaxSpeed}" Foreground="#9AA5B8"/>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Background="#141820" CornerRadius="4" Padding="5,3" Margin="2">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{DynamicResource LblMicrostep}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                        <TextBlock Text="{Binding MicrostepDisplay}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#ECF0F6"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border Background="#141820" CornerRadius="4" Padding="5,3" Margin="2">
+                                                    <StackPanel>
+                                                        <TextBlock Text="{DynamicResource LblRfsMode}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                        <TextBlock Text="{Binding RfsModeDisplay}" FontFamily="Consolas" FontSize="11.5" FontWeight="SemiBold" Foreground="#FFB74D"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </UniformGrid>
+
+                                            <!-- Row 2: Manual Motion & Homing Controls -->
+                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,4">
+                                                <TextBlock Text="{DynamicResource LblTargetSteps}" VerticalAlignment="Center" Foreground="#9AA5B8" FontSize="11.5" Margin="2,0,4,0"/>
+                                                <TextBox Width="66" Text="{Binding MoveTargetInput, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
+                                                <Button Content="MVP ABS" Tag="{Binding}" Click="BtnAxisMoveAbs_Click" ToolTip="{DynamicResource TipMvpAbs}"/>
+                                                <Button Content="REL +" Tag="{Binding}" Click="BtnAxisMoveRelPos_Click" ToolTip="{DynamicResource TipMvpRelPos}"/>
+                                                <Button Content="REL -" Tag="{Binding}" Click="BtnAxisMoveRelNeg_Click" ToolTip="{DynamicResource TipMvpRelNeg}"/>
+
+                                                <TextBlock Text="{DynamicResource LblJogSpeed}" VerticalAlignment="Center" Foreground="#9AA5B8" FontSize="11.5" Margin="8,0,4,0"/>
+                                                <TextBox Width="46" Text="{Binding JogVelocity, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
+                                                <Button Content="ROL ◀" Tag="{Binding}" Click="BtnAxisJogLeft_Click" ToolTip="{DynamicResource TipJogLeft}"/>
+                                                <Button Content="▶ ROR" Tag="{Binding}" Click="BtnAxisJogRight_Click" ToolTip="{DynamicResource TipJogRight}"/>
+                                                <Button Content="{DynamicResource BtnMstStop}" Tag="{Binding}" Click="BtnAxisStop_Click" Background="#8E2424"/>
+                                                <Button Content="{DynamicResource BtnRfsHome}" Tag="{Binding}" Click="BtnAxisHome_Click" Background="#6D4C41" ToolTip="{DynamicResource TipRfsHome}"/>
+                                                <Button Content="SAP#1=0" Tag="{Binding}" Click="BtnAxisZero_Click" ToolTip="{DynamicResource TipZeroPos}"/>
                                             </StackPanel>
-                                        </Border>
-                                        <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="2,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="10" Height="10" Fill="{Binding IsMoving, Converter={StaticResource BlueLedConverter}}" Margin="0,0,5,0"/>
-                                                <TextBlock Text="{DynamicResource LedMove}" FontSize="11.5"/>
-                                            </StackPanel>
-                                        </Border>
-                                        <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="2,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="10" Height="10" Fill="{Binding IsRightLimit, Converter={StaticResource AmberLedConverter}}" Margin="0,0,5,0"/>
-                                                <TextBlock Text="{DynamicResource LedPosLimit}" FontSize="11.5"/>
-                                            </StackPanel>
-                                        </Border>
-                                        <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="2,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="10" Height="10" Fill="{Binding IsLeftLimit, Converter={StaticResource AmberLedConverter}}" Margin="0,0,5,0"/>
-                                                <TextBlock Text="{DynamicResource LedNegLimit}" FontSize="11.5"/>
-                                            </StackPanel>
-                                        </Border>
-                                        <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="2,0">
-                                            <StackPanel Orientation="Horizontal">
-                                                <Ellipse Width="10" Height="10" Fill="{Binding IsAlarm, Converter={StaticResource RedLedConverter}}" Margin="0,0,5,0"/>
-                                                <TextBlock Text="{DynamicResource LedAlarm}" FontSize="11.5" FontWeight="Bold"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </StackPanel>
-                                </Grid>
 
-                                <!-- Row 1: Numerical Telemetry Readouts -->
-                                <UniformGrid Grid.Row="1" Columns="6" Margin="0,0,0,6">
-                                    <Border Background="#141820" CornerRadius="4" Padding="6,3" Margin="2">
-                                        <StackPanel>
-                                            <TextBlock Text="{DynamicResource LblActualPos}" FontSize="10.5" Foreground="#9AA5B8"/>
-                                            <TextBlock Text="{Binding ActualPosition}" FontFamily="Consolas" FontSize="14" FontWeight="Bold" Foreground="#00E676"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="#141820" CornerRadius="4" Padding="6,3" Margin="2">
-                                        <StackPanel>
-                                            <TextBlock Text="{DynamicResource LblTargetPos}" FontSize="10.5" Foreground="#9AA5B8"/>
-                                            <TextBlock Text="{Binding TargetPosition}" FontFamily="Consolas" FontSize="14" FontWeight="Bold" Foreground="#4FC3F7"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="#141820" CornerRadius="4" Padding="6,3" Margin="2">
-                                        <StackPanel>
-                                            <TextBlock Text="{DynamicResource LblMechPosMm}" FontSize="10.5" Foreground="#9AA5B8"/>
-                                            <TextBlock Text="{Binding PositionMm, StringFormat={}{0:F2} mm}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#FFD54F"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="#141820" CornerRadius="4" Padding="6,3" Margin="2">
-                                        <StackPanel>
-                                            <TextBlock Text="{DynamicResource LblSpeed}" FontSize="10.5" Foreground="#9AA5B8"/>
-                                            <TextBlock FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="#ECF0F6">
-                                                <Run Text="{Binding ActualSpeed}"/><Run Text=" / " Foreground="#9AA5B8"/><Run Text="{Binding MaxSpeed}" Foreground="#9AA5B8"/>
-                                            </TextBlock>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="#141820" CornerRadius="4" Padding="6,3" Margin="2">
-                                        <StackPanel>
-                                            <TextBlock Text="{DynamicResource LblMicrostep}" FontSize="10.5" Foreground="#9AA5B8"/>
-                                            <TextBlock Text="{Binding MicrostepDisplay}" FontFamily="Consolas" FontSize="12.5" FontWeight="SemiBold" Foreground="#ECF0F6"/>
-                                        </StackPanel>
-                                    </Border>
-                                    <Border Background="#141820" CornerRadius="4" Padding="6,3" Margin="2">
-                                        <StackPanel>
-                                            <TextBlock Text="{DynamicResource LblRfsMode}" FontSize="10.5" Foreground="#9AA5B8"/>
-                                            <TextBlock Text="{Binding RfsModeDisplay}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#FFB74D"/>
-                                        </StackPanel>
-                                    </Border>
-                                </UniformGrid>
+                                            <!-- Row 3: Limit Switch Force Toggles & Alarm Fault Injection -->
+                                            <Grid Grid.Row="3">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
 
-                                <!-- Row 2: Manual Motion & Homing Controls -->
-                                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,4">
-                                    <TextBlock Text="{DynamicResource LblTargetSteps}" VerticalAlignment="Center" Foreground="#9AA5B8" FontSize="11.5" Margin="2,0,4,0"/>
-                                    <TextBox Width="68" Text="{Binding MoveTargetInput, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
-                                    <Button Content="MVP ABS" Tag="{Binding}" Click="BtnAxisMoveAbs_Click" ToolTip="{DynamicResource TipMvpAbs}"/>
-                                    <Button Content="REL +" Tag="{Binding}" Click="BtnAxisMoveRelPos_Click" ToolTip="{DynamicResource TipMvpRelPos}"/>
-                                    <Button Content="REL -" Tag="{Binding}" Click="BtnAxisMoveRelNeg_Click" ToolTip="{DynamicResource TipMvpRelNeg}"/>
+                                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <CheckBox Content="{DynamicResource ChkForcePosLimit}" IsChecked="{Binding ForceRightLimit}" Foreground="#FFB74D" VerticalAlignment="Center" Margin="2,0,12,0"/>
+                                                    <CheckBox Content="{DynamicResource ChkForceNegLimit}" IsChecked="{Binding ForceLeftLimit}" Foreground="#FFB74D" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                                    <Button Content="{DynamicResource BtnToggleAlarm}" Tag="{Binding}" Click="BtnAxisToggleAlarm_Click" Background="#6A1B29" BorderBrush="#FF5252" Padding="8,2"/>
+                                                </StackPanel>
 
-                                    <TextBlock Text="{DynamicResource LblJogSpeed}" VerticalAlignment="Center" Foreground="#9AA5B8" FontSize="11.5" Margin="8,0,4,0"/>
-                                    <TextBox Width="48" Text="{Binding JogVelocity, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas"/>
-                                    <Button Content="ROL ◀" Tag="{Binding}" Click="BtnAxisJogLeft_Click" ToolTip="{DynamicResource TipJogLeft}"/>
-                                    <Button Content="▶ ROR" Tag="{Binding}" Click="BtnAxisJogRight_Click" ToolTip="{DynamicResource TipJogRight}"/>
-                                    <Button Content="{DynamicResource BtnMstStop}" Tag="{Binding}" Click="BtnAxisStop_Click" Background="#8E2424"/>
-                                    <Button Content="{DynamicResource BtnRfsHome}" Tag="{Binding}" Click="BtnAxisHome_Click" Background="#6D4C41" ToolTip="{DynamicResource TipRfsHome}"/>
-                                    <Button Content="SAP#1=0" Tag="{Binding}" Click="BtnAxisZero_Click" ToolTip="{DynamicResource TipZeroPos}"/>
+                                                <TextBlock Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11.5" Foreground="#9AA5B8">
+                                                    <Run Text="SG2 Load(#206): "/><Run Text="{Binding ActualLoad}" Foreground="#4FC3F7"/>
+                                                    <Run Text=" | Flags: "/><Run Text="{Binding ErrorFlagsSummary}" Foreground="#FF8A80"/>
+                                                </TextBlock>
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </TabItem>
+
+                <!-- TAB 2: MACHINE SCENE, ORIGIN PRESETS, STROKE LIMITS & SYSTEM SETTINGS -->
+                <TabItem Header="{DynamicResource TabSettings}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="2,4,6,4">
+                        <StackPanel>
+                            <!-- Card 1: 3D Machine Mode & Origin Presets -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource GrpMachineOrigin}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,8"/>
+
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource LblSceneMode}" VerticalAlignment="Center" Foreground="#9AA5B8"/>
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableSceneModes}" SelectedValuePath="Value" SelectedValue="{Binding SelectedSceneMode}" DisplayMemberPath="Label" Height="26" VerticalContentAlignment="Center"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource LblXyOrigin}" VerticalAlignment="Center" Foreground="#9AA5B8"/>
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableXyOrigins}" SelectedValuePath="Value" SelectedValue="{Binding SelectedXyOrigin}" DisplayMemberPath="Label" Height="26" VerticalContentAlignment="Center"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,0,0,8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="135"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{DynamicResource LblZOrigin}" VerticalAlignment="Center" Foreground="#9AA5B8"/>
+                                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableZOrigins}" SelectedValuePath="Value" SelectedValue="{Binding SelectedZOrigin}" DisplayMemberPath="Label" Height="26" VerticalContentAlignment="Center"/>
+                                    </Grid>
+
+                                    <CheckBox Content="{DynamicResource ChkSyncRfsOrigin}" IsChecked="{Binding SyncRfsDirectionWithOrigin}" Foreground="#FFB74D" VerticalAlignment="Center"/>
                                 </StackPanel>
+                            </Border>
 
-                                <!-- Row 3: Limit Switch Force Toggles & Alarm Fault Injection -->
-                                <Grid Grid.Row="3">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
+                            <!-- Card 2: Per-Axis Travel Stroke & Hardware Limit Stop -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,8">
+                                        <TextBlock Text="{DynamicResource GrpStrokeLimits}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" VerticalAlignment="Center"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                            <TextBlock Text="{DynamicResource LblStepsPerMm}" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="0,0,6,0"/>
+                                            <TextBox Width="68" Text="{Binding StepsPerMm, UpdateSourceTrigger=LostFocus}" KeyDown="StrokeLimitTextBox_KeyDown" FontFamily="Consolas"/>
+                                        </StackPanel>
+                                    </Grid>
 
-                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <CheckBox Content="{DynamicResource ChkForcePosLimit}" IsChecked="{Binding ForceRightLimit}" Foreground="#FFB74D" VerticalAlignment="Center" Margin="2,0,12,0"/>
-                                        <CheckBox Content="{DynamicResource ChkForceNegLimit}" IsChecked="{Binding ForceLeftLimit}" Foreground="#FFB74D" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                                        <Button Content="{DynamicResource BtnToggleAlarm}" Tag="{Binding}" Click="BtnAxisToggleAlarm_Click" Background="#6A1B29" BorderBrush="#FF5252" Padding="8,2"/>
+                                    <ItemsControl ItemsSource="{Binding ActiveAxes}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="210"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Grid.Column="0" Text="{Binding AxisTitle}" VerticalAlignment="Center" Foreground="#ECF0F6" FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                                                        <TextBlock Text="{DynamicResource LblMinLimit}" VerticalAlignment="Center" Foreground="#9AA5B8" FontSize="11.5" Margin="0,0,4,0"/>
+                                                        <TextBox Width="62" Text="{Binding MinLimitMm, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.##}}" KeyDown="StrokeLimitTextBox_KeyDown" ToolTip="{DynamicResource TipMinLimitMm}" FontFamily="Consolas"/>
+                                                    </StackPanel>
+
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                                                        <TextBlock Text="{DynamicResource LblMaxLimit}" VerticalAlignment="Center" Foreground="#9AA5B8" FontSize="11.5" Margin="0,0,4,0"/>
+                                                        <TextBox Width="62" Text="{Binding MaxLimitMm, UpdateSourceTrigger=LostFocus, StringFormat={}{0:0.##}}" KeyDown="StrokeLimitTextBox_KeyDown" ToolTip="{DynamicResource TipMaxLimitMm}" FontFamily="Consolas"/>
+                                                    </StackPanel>
+
+                                                    <CheckBox Grid.Column="3" Content="{DynamicResource ChkLimitStopShort}" IsChecked="{Binding IsLimitStopEnabled}" ToolTip="{DynamicResource TipLimitStop}" Foreground="#81D4FA" VerticalAlignment="Center" Margin="0,0,8,0"/>
+
+                                                    <TextBlock Grid.Column="4" Text="{Binding StrokeStepsDisplay}" HorizontalAlignment="Right" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11" Foreground="#9AA5B8"/>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Card 3: TMCL Node Addressing & TCP Transport -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource GrpTmclAddressing}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,8"/>
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="ModAddr(#66):" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="0,0,6,0"/>
+                                        <TextBox Width="48" Text="{Binding ModuleAddress, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="0,0,16,0"/>
+
+                                        <TextBlock Text="HostAddr(#76):" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="0,0,6,0"/>
+                                        <TextBox Width="48" Text="{Binding HostAddress, UpdateSourceTrigger=PropertyChanged}" FontFamily="Consolas" Margin="0,0,18,0"/>
+
+                                        <TextBlock Text="{DynamicResource LblTcpServerInfo}" VerticalAlignment="Center" Foreground="#81C784" FontSize="12"/>
                                     </StackPanel>
+                                </StackPanel>
+                            </Border>
 
-                                    <TextBlock Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" FontFamily="Consolas" FontSize="11.5" Foreground="#9AA5B8">
-                                        <Run Text="SG2 Load(#206): "/><Run Text="{Binding ActualLoad}" Foreground="#4FC3F7"/>
-                                        <Run Text=" | Flags: "/><Run Text="{Binding ErrorFlagsSummary}" Foreground="#FF8A80"/>
-                                    </TextBlock>
-                                </Grid>
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+                            <!-- Card 4: Configuration File & UI Language -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource GrpConfigAndUi}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,8"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <Button Content="{DynamicResource BtnLoadConfig}" Click="BtnLoadConfig_Click" Padding="12,5" Margin="0,0,10,0"/>
+                                        <TextBlock Text="{DynamicResource LblLanguageSetting}" VerticalAlignment="Center" Foreground="#9AA5B8" Margin="6,0,6,0"/>
+                                        <Button Content="{DynamicResource BtnToggleLanguage}" ToolTip="{DynamicResource TipToggleLanguage}" Click="BtnToggleLanguage_Click" Background="#263238" BorderBrush="#4FC3F7" Padding="12,5"/>
+                                    </StackPanel>
+                                    <TextBlock Text="{Binding LoadedConfigSummary}" FontSize="12" Foreground="#9AA5B8" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
         </Grid>
 
         <!-- ==================== BOTTOM: 9-BYTE BINARY PACKET SNIFFER & DISASSEMBLER ==================== -->

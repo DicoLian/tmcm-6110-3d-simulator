@@ -24,9 +24,66 @@ public class AxisState
     private int _rfsState;
 
     // Physical stroke limits (in microsteps) for automatic virtual limit switch triggering
-    public int VirtualMinStrokeSteps { get; set; } = -100_000;
-    public int VirtualMaxStrokeSteps { get; set; } = 100_000;
-    public bool AutoTriggerStrokeLimits { get; set; } = true;
+    private int _virtualMinStrokeSteps = -100_000;
+    private int _virtualMaxStrokeSteps = 100_000;
+    private bool _autoTriggerStrokeLimits = true;
+
+    public int VirtualMinStrokeSteps
+    {
+        get { lock (_syncLock) return _virtualMinStrokeSteps; }
+        set
+        {
+            lock (_syncLock)
+            {
+                _virtualMinStrokeSteps = value;
+                UpdateSwitchAndStatusRegistersUnsafe();
+            }
+        }
+    }
+
+    public int VirtualMaxStrokeSteps
+    {
+        get { lock (_syncLock) return _virtualMaxStrokeSteps; }
+        set
+        {
+            lock (_syncLock)
+            {
+                _virtualMaxStrokeSteps = value;
+                UpdateSwitchAndStatusRegistersUnsafe();
+            }
+        }
+    }
+
+    public bool AutoTriggerStrokeLimits
+    {
+        get { lock (_syncLock) return _autoTriggerStrokeLimits; }
+        set
+        {
+            lock (_syncLock)
+            {
+                _autoTriggerStrokeLimits = value;
+                UpdateSwitchAndStatusRegistersUnsafe();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Atomically updates both virtual stroke limits (normalizing min &lt; max) and refreshes switch registers.
+    /// </summary>
+    public void SetVirtualStrokeLimits(int minSteps, int maxSteps)
+    {
+        lock (_syncLock)
+        {
+            if (minSteps > maxSteps)
+                (minSteps, maxSteps) = (maxSteps, minSteps);
+            if (minSteps == maxSteps)
+                maxSteps = minSteps < int.MaxValue ? minSteps + 1 : minSteps - 1;
+
+            _virtualMinStrokeSteps = minSteps;
+            _virtualMaxStrokeSteps = maxSteps;
+            UpdateSwitchAndStatusRegistersUnsafe();
+        }
+    }
 
     // Manual override toggles from UI for testing +Limit, -Limit, Ref Switch, and Alarm
     public bool ManualRightLimitOverride { get; set; }
@@ -122,6 +179,11 @@ public class AxisState
             _exactSpeed = 0;
             _interpolationSpeedOverride = 0;
             _rfsState = 0;
+
+            int defaultHalfStroke = axisIndex == 0 ? 45_000 : 100_000;
+            _virtualMinStrokeSteps = -defaultHalfStroke;
+            _virtualMaxStrokeSteps = defaultHalfStroke;
+            _autoTriggerStrokeLimits = true;
         }
     }
 
@@ -392,6 +454,8 @@ public class AxisState
             bool leftLimHit = _params[TmclAxisParam.LeftLimitSwitchStatus] != 0;
             bool rightLimDisabled = _params[TmclAxisParam.RightLimitSwitchDisable] != 0;
             bool leftLimDisabled = _params[TmclAxisParam.LeftLimitSwitchDisable] != 0;
+            int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+            int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
 
             if (rampMode == 2)
             {
@@ -415,6 +479,22 @@ public class AxisState
                         _exactSpeed += Math.Sign(desiredStepsPerSec - _exactSpeed) * maxDeltaV;
 
                     _exactPosition += _exactSpeed * dtSeconds;
+
+                    if (_autoTriggerStrokeLimits)
+                    {
+                        if (_exactSpeed > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
+                        {
+                            _exactPosition = effectiveMax;
+                            _exactSpeed = 0;
+                            _params[TmclAxisParam.TargetSpeed] = 0;
+                        }
+                        else if (_exactSpeed < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
+                        {
+                            _exactPosition = effectiveMin;
+                            _exactSpeed = 0;
+                            _params[TmclAxisParam.TargetSpeed] = 0;
+                        }
+                    }
                 }
             }
             else
@@ -440,6 +520,7 @@ public class AxisState
                         (dir < 0 && leftLimHit && !leftLimDisabled))
                     {
                         _exactSpeed = 0;
+                        _interpolationSpeedOverride = 0;
                         _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
                         _params[TmclAxisParam.TargetSpeed] = 0;
                     }
@@ -475,6 +556,26 @@ public class AxisState
                         {
                             _exactPosition += stepDelta;
                             _exactSpeed = nextSpeed;
+                        }
+
+                        if (_autoTriggerStrokeLimits)
+                        {
+                            if (dir > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
+                            {
+                                _exactPosition = effectiveMax;
+                                _exactSpeed = 0;
+                                _interpolationSpeedOverride = 0;
+                                _params[TmclAxisParam.TargetPosition] = effectiveMax;
+                                _params[TmclAxisParam.TargetSpeed] = 0;
+                            }
+                            else if (dir < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
+                            {
+                                _exactPosition = effectiveMin;
+                                _exactSpeed = 0;
+                                _interpolationSpeedOverride = 0;
+                                _params[TmclAxisParam.TargetPosition] = effectiveMin;
+                                _params[TmclAxisParam.TargetSpeed] = 0;
+                            }
                         }
 
                         _params[TmclAxisParam.TargetSpeed] = (int)Math.Round(_exactSpeed / speedMultiplier);
@@ -517,6 +618,15 @@ public class AxisState
             {
                 _exactSpeed = searchDir * searchSpeedParam * speedMultiplier;
                 _exactPosition += _exactSpeed * dtSeconds;
+                if (_autoTriggerStrokeLimits)
+                {
+                    int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+                    int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+                    if (searchRightSwitch && _exactPosition >= effectiveMax)
+                        _exactPosition = effectiveMax;
+                    else if (!searchRightSwitch && _exactPosition <= effectiveMin)
+                        _exactPosition = effectiveMin;
+                }
             }
         }
         else if (_rfsState == 2)
@@ -551,8 +661,10 @@ public class AxisState
         int pos = (int)Math.Round(_exactPosition);
         int target = _params[TmclAxisParam.TargetPosition];
 
-        bool autoRight = AutoTriggerStrokeLimits && pos >= VirtualMaxStrokeSteps;
-        bool autoLeft = AutoTriggerStrokeLimits && pos <= VirtualMinStrokeSteps;
+        int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+        int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+        bool autoRight = _autoTriggerStrokeLimits && pos >= effectiveMax;
+        bool autoLeft = _autoTriggerStrokeLimits && pos <= effectiveMin;
 
         bool rightActive = ManualRightLimitOverride || autoRight;
         bool leftActive = ManualLeftLimitOverride || autoLeft;
@@ -629,7 +741,11 @@ public class AxisState
                 _rfsState,
                 _params[TmclAxisParam.ActualLoadValue],
                 _params[TmclAxisParam.ExtendedErrorFlags],
-                _params[TmclAxisParam.DriverErrorFlags]
+                _params[TmclAxisParam.DriverErrorFlags],
+                _virtualMinStrokeSteps,
+                _virtualMaxStrokeSteps,
+                _params[TmclAxisParam.RightLimitSwitchDisable] != 0,
+                _params[TmclAxisParam.LeftLimitSwitchDisable] != 0
             );
         }
     }
@@ -655,5 +771,9 @@ public readonly record struct AxisSnapshot(
     int RfsPhase,
     int ActualLoadValue,
     int ExtendedErrorFlags,
-    int DriverErrorFlags
+    int DriverErrorFlags,
+    int VirtualMinStrokeSteps,
+    int VirtualMaxStrokeSteps,
+    bool IsRightLimitDisabled,
+    bool IsLeftLimitDisabled
 );

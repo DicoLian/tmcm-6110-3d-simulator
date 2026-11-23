@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
@@ -25,6 +26,8 @@ public partial class MainWindow : Window
     private bool _isDraggingOrbit;
     private Point _lastMousePos;
     private int _demoStepCounter;
+    private readonly Axis3DFrame[] _frameBuffer = new Axis3DFrame[6];
+    private readonly double[] _posMmBuffer = new double[6];
 
     public MainWindow()
     {
@@ -32,6 +35,7 @@ public partial class MainWindow : Window
 
         _viewModel = new MainViewModel();
         DataContext = _viewModel;
+        _viewModel.SceneModeChanged += OnViewModelSceneModeChanged;
 
         _sceneBuilder = new Gantry3DSceneBuilder();
         MainViewport3D.Children.Add(new ModelVisual3D { Content = _sceneBuilder.RootGroup });
@@ -41,6 +45,8 @@ public partial class MainWindow : Window
         // Hook into WPF CompositionTarget.Rendering (~60 FPS) to step physics and update 3D Gantry & Dashboard
         CompositionTarget.Rendering += OnCompositionTargetRendering;
     }
+
+    private void OnViewModelSceneModeChanged(MachineSceneMode mode) => _sceneBuilder.SetSceneMode(mode);
 
     private void OnCompositionTargetRendering(object? sender, EventArgs e)
     {
@@ -61,30 +67,36 @@ public partial class MainWindow : Window
 
         double stepsPerMm = Math.Max(10.0, _viewModel.StepsPerMm);
 
-        // Default Axis Mapping: Axis 0 = Z, Axis 1 = Y, Axis 2 = X
-        var snapZ = _viewModel.Controller.GetAxis(0).GetSnapshot();
-        var snapY = _viewModel.Controller.GetAxis(1).GetSnapshot();
-        var snapX = _viewModel.Controller.GetAxis(2).GetSnapshot();
+        for (int i = 0; i < 6; i++)
+        {
+            var snap = _viewModel.Controller.GetAxis(i).GetSnapshot();
+            _viewModel.AllAxes[i].RefreshFromSnapshot(snap, stepsPerMm);
+            _posMmBuffer[i] = snap.ExactPosition / stepsPerMm;
+            _frameBuffer[i] = new Axis3DFrame(
+                _posMmBuffer[i],
+                snap.VirtualMinStrokeSteps / stepsPerMm,
+                snap.VirtualMaxStrokeSteps / stepsPerMm,
+                snap.IsRightLimitTriggered,
+                snap.IsLeftLimitTriggered,
+                snap.IsAlarmActive);
+        }
 
-        _viewModel.ActiveAxes[0].RefreshFromSnapshot(snapZ, stepsPerMm);
-        _viewModel.ActiveAxes[1].RefreshFromSnapshot(snapY, stepsPerMm);
-        _viewModel.ActiveAxes[2].RefreshFromSnapshot(snapX, stepsPerMm);
+        _sceneBuilder.UpdateScene(_frameBuffer);
 
-        double zMm = snapZ.ExactPosition / stepsPerMm;
-        double yMm = snapY.ExactPosition / stepsPerMm;
-        double xMm = snapX.ExactPosition / stepsPerMm;
-
-        bool anyAlarm = snapZ.IsAlarmActive || snapY.IsAlarmActive || snapX.IsAlarmActive;
-
-        _sceneBuilder.UpdateScene(
-            zMm, yMm, xMm,
-            snapZ.IsRightLimitTriggered, snapZ.IsLeftLimitTriggered,
-            snapY.IsRightLimitTriggered, snapY.IsLeftLimitTriggered,
-            snapX.IsRightLimitTriggered, snapX.IsLeftLimitTriggered,
-            anyAlarm);
-
-        string coordPrefix = LanguageManager.IsEnglish ? "TCP Coord:" : "TCP 座標:";
-        Txt3DCoordOverlay.Text = $"{coordPrefix} X(Axis2)={xMm,7:F2} mm | Y(Axis1)={yMm,7:F2} mm | Z(Axis0)={zMm,7:F2} mm";
+        string coordPrefix = LanguageManager.IsEnglish ? "Coord:" : "座標:";
+        Txt3DCoordOverlay.Text = _viewModel.SelectedSceneMode switch
+        {
+            MachineSceneMode.DualGantry6Axis =>
+                $"S1(X={_posMmBuffer[2],6:F1}, Y={_posMmBuffer[1],6:F1}, Z={_posMmBuffer[0],5:F1}) | S2(X={_posMmBuffer[5],6:F1}, Y={_posMmBuffer[4],6:F1}, Z={_posMmBuffer[3],5:F1}) mm",
+            MachineSceneMode.GantryRotaryAux6Axis =>
+                $"X={_posMmBuffer[2],6:F1} Y={_posMmBuffer[1],6:F1} Z={_posMmBuffer[0],5:F1} | R={_posMmBuffer[3],5:F1} A={_posMmBuffer[4],5:F1} B={_posMmBuffer[5],5:F1}",
+            MachineSceneMode.RobotArm6Dof =>
+                $"J1={_posMmBuffer[0],5:F1} J2={_posMmBuffer[1],5:F1} J3={_posMmBuffer[2],5:F1} J4={_posMmBuffer[3],5:F1} J5={_posMmBuffer[4],5:F1} J6={_posMmBuffer[5],5:F1}",
+            MachineSceneMode.LinearBench6Axis =>
+                $"A0={_posMmBuffer[0],5:F1} A1={_posMmBuffer[1],5:F1} A2={_posMmBuffer[2],5:F1} A3={_posMmBuffer[3],5:F1} A4={_posMmBuffer[4],5:F1} A5={_posMmBuffer[5],5:F1} mm",
+            _ =>
+                $"{coordPrefix} X(A2)={_posMmBuffer[2],7:F2} mm | Y(A1)={_posMmBuffer[1],7:F2} mm | Z(A0)={_posMmBuffer[0],7:F2} mm"
+        };
     }
 
     // ==================== 3D ORBIT CAMERA MOUSE HANDLERS ====================
@@ -184,19 +196,7 @@ public partial class MainWindow : Window
 
     private void BtnDemoInterpolation_Click(object sender, RoutedEventArgs e)
     {
-        // Cycle through 3D space waypoints to showcase 3-axis coordinated linear interpolation + Cmd 138 event
-        (int z, int y, int x)[] waypoints =
-        [
-            (35000, 65000, 75000),
-            (-25000, 65000, -75000),
-            (20000, -65000, -75000),
-            (-30000, -65000, 75000),
-            (0, 0, 0)
-        ];
-
-        var wp = waypoints[_demoStepCounter % waypoints.Length];
-        _demoStepCounter++;
-        _viewModel.ExecuteDemo3DInterpolatedMove(wp.z, wp.y, wp.x);
+        _viewModel.ExecuteDemoInterpolatedStep(_demoStepCounter++);
     }
 
     private void BtnHomeAll_Click(object sender, RoutedEventArgs e) => _viewModel.HomeAllAxes();
@@ -253,9 +253,20 @@ public partial class MainWindow : Window
         if (sender is Button { Tag: AxisViewModel vm }) vm.ToggleAlarmInjection();
     }
 
+    private void StrokeLimitTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && sender is TextBox tb)
+        {
+            tb.GetBindingExpression(TextBox.TextProperty)?.UpdateSource();
+            Keyboard.ClearFocus();
+            e.Handled = true;
+        }
+    }
+
     private void Window_Closed(object sender, EventArgs e)
     {
         CompositionTarget.Rendering -= OnCompositionTargetRendering;
+        _viewModel.SceneModeChanged -= OnViewModelSceneModeChanged;
         _viewModel.Dispose();
     }
 }
