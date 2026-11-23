@@ -1,3 +1,4 @@
+using Tmcm6110.Core.Abstractions;
 using Tmcm6110.Core.Protocol;
 
 namespace Tmcm6110.Core.Engine;
@@ -7,7 +8,7 @@ namespace Tmcm6110.Core.Engine;
 /// Handles trapezoidal ramping, ROR/ROL/MST/MVP, Reference Search (RFS Mode 1..8 & +64/+128),
 /// Limit switches (+Limit / -Limit / Ref), and Alarm flags (StallGuard2 #207 & Driver Errors #208).
 /// </summary>
-public class AxisState
+public class AxisState : IMotionAxis
 {
     private readonly object _syncLock = new();
     private readonly Dictionary<byte, int> _params = new();
@@ -747,6 +748,61 @@ public class AxisState
                 _params[TmclAxisParam.RightLimitSwitchDisable] != 0,
                 _params[TmclAxisParam.LeftLimitSwitchDisable] != 0
             );
+        }
+    }
+
+    public void StartHoming() => StartReferenceSearch();
+    public void StopHoming() => StopReferenceSearch();
+    public void SetActualPosition(int position) => SetParameter(TmclAxisParam.ActualPosition, position);
+
+    public void SetLimitStopEnabled(bool rightEnabled, bool leftEnabled)
+    {
+        SetParameter(TmclAxisParam.RightLimitSwitchDisable, rightEnabled ? 0 : 1);
+        SetParameter(TmclAxisParam.LeftLimitSwitchDisable, leftEnabled ? 0 : 1);
+    }
+
+    public void TriggerFault() => TriggerAlarm();
+    public void ClearFault() => ClearAlarm();
+
+    public MotionAxisTelemetry GetTelemetry()
+    {
+        var snap = GetSnapshot();
+        return new MotionAxisTelemetry(
+            snap.AxisIndex,
+            snap.AxisName,
+            snap.MotionState,
+            snap.ExactPosition,
+            snap.ActualPosition,
+            snap.TargetPosition,
+            snap.ActualSpeed,
+            snap.MaxSpeed,
+            snap.MaxAcceleration,
+            snap.IsPositionReached,
+            snap.IsRightLimitTriggered,
+            snap.IsLeftLimitTriggered,
+            snap.IsRefSwitchTriggered,
+            snap.IsAlarmActive,
+            snap.RfsPhase,
+            snap.VirtualMinStrokeSteps,
+            snap.VirtualMaxStrokeSteps,
+            !snap.IsRightLimitDisabled,
+            !snap.IsLeftLimitDisabled
+        );
+    }
+
+    public IReadOnlyList<VendorDiagnosticItem> GetVendorDiagnostics()
+    {
+        lock (_syncLock)
+        {
+            UpdateSwitchAndStatusRegistersUnsafe();
+            return new VendorDiagnosticItem[]
+            {
+                new("SG2 Load (#206)", _params[TmclAxisParam.ActualLoadValue].ToString()),
+                new("Stall Error (#207)", _params[TmclAxisParam.ExtendedErrorFlags].ToString()),
+                new("TMC262 Flags (#208)", $"0x{_params[TmclAxisParam.DriverErrorFlags]:X2}"),
+                new("Microstep (#140)", _params[TmclAxisParam.MicrostepResolution].ToString()),
+                new("RFS Mode (#193)", _params[TmclAxisParam.ReferenceSearchMode].ToString())
+            };
         }
     }
 }

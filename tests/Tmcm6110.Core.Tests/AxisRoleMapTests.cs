@@ -103,4 +103,30 @@ public class AxisRoleMapTests
         Assert.False(map.TryApplyFromXyzLabels("X", "X", "Z"));
         Assert.False(map.TryApplyFromXyzLabels("A", "B", "C"));
     }
+
+    [Fact]
+    public void TrySwapMotorChannels_ReassignsActiveSingleAxisToArbitraryMotorChannel()
+    {
+        var map = new AxisRoleMap();
+
+        // Swap Motor #0 (role 0) onto physical Motor #3 (role 3)
+        Assert.True(map.TrySwapMotorChannels(0, 3));
+        Assert.Equal(3, map.GetMotorForRole(0));
+        Assert.Equal(0, map.GetRoleForMotor(3));
+        Assert.Equal(3, map.GetRoleForMotor(0));
+        Assert.Equal(0, map.GetMotorForRole(3));
+
+        // Same-channel swap or out-of-range index is a safe no-op
+        Assert.False(map.TrySwapMotorChannels(3, 3));
+        Assert.False(map.TrySwapMotorChannels(-1, 2));
+        Assert.False(map.TrySwapMotorChannels(0, 6));
+
+        // Active role swap still works after moving an active role to physical Motor #3..#5
+        Assert.True(map.TrySwapMotorChannels(1, 5));
+        Assert.True(map.TrySwapMotorRole(3, 1, activeAxisCount: 3, out int partnerMotor, out int oldRole));
+        Assert.Equal(5, partnerMotor);
+        Assert.Equal(0, oldRole);
+        Assert.Equal(1, map.GetRoleForMotor(3));
+        Assert.Equal(0, map.GetRoleForMotor(5));
+    }
 }

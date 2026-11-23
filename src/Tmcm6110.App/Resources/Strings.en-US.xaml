@@ -58,10 +58,12 @@
     <sys:String x:Key="TabAxesControl">Axes Monitor &amp; Control</sys:String>
     <sys:String x:Key="TabSettings">Machine &amp; System Settings</sys:String>
     <sys:String x:Key="GrpMachineOrigin">3D Machine Mode &amp; Origin Position</sys:String>
+    <sys:String x:Key="LblAxisCount">Active Axes:</sys:String>
     <sys:String x:Key="LblSceneMode">3D Machine Mode:</sys:String>
     <sys:String x:Key="LblXyOrigin">XY Machine Origin:</sys:String>
     <sys:String x:Key="LblZOrigin">Z-Axis Origin:</sys:String>
     <sys:String x:Key="ChkSyncRfsOrigin">Sync RFS homing direction (#193) when changing origin</sys:String>
+    <sys:String x:Key="TipMotorChannelSelect">Reassign the physical TMCM-6110 motor channel (Motor #0 - #5) for this axis</sys:String>
     <sys:String x:Key="TipAxisRoleSelect">Reassign this motor's 3D axis role (auto-swaps with the target axis)</sys:String>
     <sys:String x:Key="LblAxisMapping">Axis Mapping:</sys:String>
     <sys:String x:Key="BtnMappingZyx">Default Z-Y-X (M0=Z, M1=Y, M2=X)</sys:String>

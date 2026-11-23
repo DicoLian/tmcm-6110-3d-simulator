@@ -3,8 +3,10 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Threading;
 using Tmcm6110.App.Localization;
 using Tmcm6110.App.Rendering;
+using Tmcm6110.Core.Abstractions;
 using Tmcm6110.Core.Config;
 using Tmcm6110.Core.Engine;
 using Tmcm6110.Core.Protocol;
@@ -33,6 +35,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<AxisViewModel> AllAxes { get; } = new();
     public ObservableCollection<AxisViewModel> ActiveAxes { get; } = new();
+    public ObservableCollection<SelectableOption<int>> AvailableAxisCounts { get; } = new();
+    public ObservableCollection<SelectableOption<int>> AvailableMotorOptions { get; } = new();
     public ObservableCollection<SelectableOption<int>> AvailableRoleOptions { get; } = new();
     public ObservableCollection<SelectableOption<MachineSceneMode>> AvailableSceneModes { get; } = new();
     public ObservableCollection<SelectableOption<XyOriginPreset>> AvailableXyOrigins { get; } = new();
@@ -59,6 +63,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _hidePollingPacketsInLog = true;
     private double _stepsPerMm = 1000.0; // Default: 1000 microsteps = 1.0 mm in 3D view (-100mm..+100mm)
     private long _totalRxPackets;
+    private int _selectedAxisCount = 3;
     private MachineSceneMode _selectedSceneMode = MachineSceneMode.Gantry3Axis;
     private XyOriginPreset _selectedXyOrigin = XyOriginPreset.Center;
     private ZOriginPreset _selectedZOrigin = ZOriginPreset.Center;
@@ -69,6 +74,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _legendLine3 = string.Empty;
     private string _legendLine4 = string.Empty;
     private bool _isSwappingRoles;
+    private bool _isUpdatingSceneOptions;
 
     public event Action<MachineSceneMode>? SceneModeChanged;
     public event Action? AxisMappingChanged;
@@ -139,51 +145,115 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    public int SelectedAxisCount
+    {
+        get => _selectedAxisCount;
+        set
+        {
+            int clamped = Math.Clamp(value, 1, Tmcm6110Controller.TotalAxes);
+            if (_selectedAxisCount == clamped) return;
+
+            _selectedAxisCount = clamped;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanApplyStandardXyzMapping));
+
+            InvokeDeferred(ApplyAxisCountSelection);
+        }
+    }
+
+    public bool CanApplyStandardXyzMapping => _selectedAxisCount >= 3;
+
     public MachineSceneMode SelectedSceneMode
     {
         get => _selectedSceneMode;
         set
         {
-            if (_selectedSceneMode == value) return;
+            if (_isUpdatingSceneOptions || _selectedSceneMode == value) return;
             _selectedSceneMode = value;
             OnPropertyChanged();
-
-            bool rolesChanged = false;
-            if (_selectedSceneMode == MachineSceneMode.Gantry3Axis)
-            {
-                var strokeByRole = CaptureStrokesByRole();
-                if (RoleMap.NormalizeForActiveCount(3))
-                {
-                    RestoreStrokesByRole(strokeByRole);
-                    rolesChanged = true;
-                }
-            }
-
-            if (_selectedSceneMode != MachineSceneMode.Gantry3Axis)
-                SyncAvailableRoleOptions();
-
-            RebuildActiveAxes();
-
-            if (_selectedSceneMode == MachineSceneMode.Gantry3Axis)
-                SyncAvailableRoleOptions();
-
-            _isSwappingRoles = true;
-            try
-            {
-                for (int m = 0; m < AllAxes.Count; m++)
-                    AllAxes[m].SetAssignedRoleSlotInternal(RoleMap.GetRoleForMotor(m), _selectedSceneMode);
-            }
-            finally
-            {
-                _isSwappingRoles = false;
-            }
-
-            SyncControllerAxisNamesFromRoles();
-            RefreshLegendTexts();
-            if (rolesChanged)
-                AxisMappingChanged?.Invoke();
-            SceneModeChanged?.Invoke(_selectedSceneMode);
+            InvokeDeferred(() => ApplySceneAndAxisCountUpdate(_selectedSceneMode));
         }
+    }
+
+    private static void InvokeDeferred(Action action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null)
+            dispatcher.BeginInvoke(DispatcherPriority.Background, action);
+        else
+            action();
+    }
+
+    private void ApplyAxisCountSelection()
+    {
+        var supportedModes = MachineSceneCatalog.GetModesForAxisCount(_selectedAxisCount);
+        MachineSceneMode targetMode = supportedModes.Contains(_selectedSceneMode)
+            ? _selectedSceneMode
+            : supportedModes[0];
+
+        SyncAvailableSceneModesForAxisCount(supportedModes, targetMode);
+        ApplySceneAndAxisCountUpdate(targetMode);
+    }
+
+    private void SyncAvailableSceneModesForAxisCount(IReadOnlyList<MachineSceneMode> supportedModes, MachineSceneMode targetMode)
+    {
+        _isUpdatingSceneOptions = true;
+        try
+        {
+            for (int i = 0; i < supportedModes.Count; i++)
+            {
+                var mode = supportedModes[i];
+                if (AvailableSceneModes.All(opt => opt.Value != mode))
+                    AvailableSceneModes.Insert(Math.Min(i, AvailableSceneModes.Count), new SelectableOption<MachineSceneMode>(mode, string.Empty));
+            }
+
+            _selectedSceneMode = targetMode;
+            OnPropertyChanged(nameof(SelectedSceneMode));
+
+            for (int i = AvailableSceneModes.Count - 1; i >= 0; i--)
+            {
+                if (!supportedModes.Contains(AvailableSceneModes[i].Value))
+                    AvailableSceneModes.RemoveAt(i);
+            }
+
+            RefreshSceneModeOptionLabels();
+        }
+        finally
+        {
+            _isUpdatingSceneOptions = false;
+        }
+    }
+
+    private void ApplySceneAndAxisCountUpdate(MachineSceneMode targetMode)
+    {
+        _selectedSceneMode = targetMode;
+        OnPropertyChanged(nameof(SelectedSceneMode));
+
+        if (_selectedAxisCount > AvailableRoleOptions.Count)
+        {
+            SyncAvailableRoleOptions();
+            RebuildActiveAxes();
+        }
+        else
+        {
+            RebuildActiveAxes();
+            SyncAvailableRoleOptions();
+        }
+
+        _isSwappingRoles = true;
+        try
+        {
+            for (int m = 0; m < AllAxes.Count; m++)
+                AllAxes[m].SetAssignedRoleSlotInternal(RoleMap.GetRoleForMotor(m), _selectedSceneMode);
+        }
+        finally
+        {
+            _isSwappingRoles = false;
+        }
+
+        SyncControllerAxisNamesFromRoles();
+        RefreshLegendTexts();
+        SceneModeChanged?.Invoke(_selectedSceneMode);
     }
 
     public XyOriginPreset SelectedXyOrigin
@@ -284,16 +354,25 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         Controller = new Tmcm6110Controller();
         SerialServer = new TmclSerialServer(Controller);
 
-        // Create ViewModels for all 6 TMCM-6110 axes; ActiveAxes exposes 3 or 6 depending on SceneMode
+        // Create ViewModels for all 6 TMCM-6110 axes; ActiveAxes exposes 1..6 depending on SelectedAxisCount
         for (int i = 0; i < Tmcm6110Controller.TotalAxes; i++)
-            AllAxes.Add(new AxisViewModel(Controller.GetAxis(i), Controller, () => StepsPerMm, AvailableRoleOptions, OnAxisRoleChangeRequested));
+        {
+            AllAxes.Add(new AxisViewModel(
+                Controller.GetAxis(i),
+                Controller,
+                () => StepsPerMm,
+                AvailableRoleOptions,
+                OnAxisRoleChangeRequested,
+                AvailableMotorOptions,
+                OnMotorChannelChangeRequested));
+        }
 
         InitializeSelectableOptions();
         SyncAvailableRoleOptions();
         RebuildActiveAxes();
         SyncControllerAxisNamesFromRoles();
 
-        Controller.PacketProcessed += OnControllerPacketProcessed;
+        SerialServer.ProtocolAdapter.TraceGenerated += OnProtocolTraceGenerated;
         SerialServer.StatusLogMessage += OnServerStatusLogMessage;
         LanguageManager.LanguageChanged += OnLanguageChanged;
 
@@ -370,11 +449,14 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void InitializeSelectableOptions()
     {
-        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.Gantry3Axis, string.Empty));
-        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.DualGantry6Axis, string.Empty));
-        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.GantryRotaryAux6Axis, string.Empty));
-        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.RobotArm6Dof, string.Empty));
-        AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(MachineSceneMode.LinearBench6Axis, string.Empty));
+        for (int count = 1; count <= Tmcm6110Controller.TotalAxes; count++)
+            AvailableAxisCounts.Add(new SelectableOption<int>(count, string.Empty));
+
+        for (int m = 0; m < Tmcm6110Controller.TotalAxes; m++)
+            AvailableMotorOptions.Add(new SelectableOption<int>(m, $"Motor #{m}"));
+
+        foreach (var mode in MachineSceneCatalog.GetModesForAxisCount(_selectedAxisCount))
+            AvailableSceneModes.Add(new SelectableOption<MachineSceneMode>(mode, string.Empty));
 
         AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.Center, string.Empty));
         AvailableXyOrigins.Add(new SelectableOption<XyOriginPreset>(XyOriginPreset.FrontLeft, string.Empty));
@@ -389,17 +471,42 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RebuildActiveAxes()
     {
-        int count = _selectedSceneMode == MachineSceneMode.Gantry3Axis ? 3 : Tmcm6110Controller.TotalAxes;
+        var desired = new List<AxisViewModel>(_selectedAxisCount);
+        for (int i = 0; i < AllAxes.Count; i++)
+        {
+            if (RoleMap.GetRoleForMotor(i) < _selectedAxisCount)
+                desired.Add(AllAxes[i]);
+        }
+
+        if (ActiveAxes.Count == desired.Count)
+        {
+            bool identical = true;
+            for (int i = 0; i < desired.Count; i++)
+            {
+                if (!ReferenceEquals(ActiveAxes[i], desired[i]))
+                {
+                    identical = false;
+                    break;
+                }
+            }
+            if (identical)
+                return;
+        }
+
         ActiveAxes.Clear();
-        for (int i = 0; i < count && i < AllAxes.Count; i++)
-            ActiveAxes.Add(AllAxes[i]);
+        foreach (var ax in desired)
+            ActiveAxes.Add(ax);
     }
 
     public int GetMotorIndexForRole(int roleSlot) => RoleMap.GetMotorForRole(roleSlot);
 
     public void ResetDefaultAxisMapping() => ApplyFirstThreeRoleOrder(0, 1, 2);
 
-    public void ApplyStandardXyzMapping() => ApplyFirstThreeRoleOrder(2, 1, 0);
+    public void ApplyStandardXyzMapping()
+    {
+        if (_selectedAxisCount >= 3)
+            ApplyFirstThreeRoleOrder(2, 1, 0);
+    }
 
     private void ApplyFirstThreeRoleOrder(int r0, int r1, int r2)
     {
@@ -416,6 +523,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             RestoreStrokesByRole(strokeByRole);
             for (int m = 0; m < AllAxes.Count; m++)
                 AllAxes[m].SetAssignedRoleSlotInternal(RoleMap.GetRoleForMotor(m), _selectedSceneMode);
+            RebuildActiveAxes();
 
             SyncControllerAxisNamesFromRoles();
             RefreshLegendTexts();
@@ -433,8 +541,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         _isSwappingRoles = true;
         try
         {
-            int activeCount = _selectedSceneMode == MachineSceneMode.Gantry3Axis ? 3 : Tmcm6110Controller.TotalAxes;
-            if (!RoleMap.TrySwapMotorRole(motorIndex, targetRoleSlot, activeCount, out int otherMotor, out int oldRole))
+            if (!RoleMap.TrySwapMotorRole(motorIndex, targetRoleSlot, _selectedAxisCount, out int otherMotor, out int oldRole))
             {
                 AllAxes[motorIndex].SetAssignedRoleSlotInternal(RoleMap.GetRoleForMotor(motorIndex), _selectedSceneMode);
                 return;
@@ -449,6 +556,39 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
             AllAxes[motorIndex].SetAssignedRoleSlotInternal(targetRoleSlot, _selectedSceneMode);
             AllAxes[otherMotor].SetAssignedRoleSlotInternal(oldRole, _selectedSceneMode);
+
+            SyncControllerAxisNamesFromRoles();
+            RefreshLegendTexts();
+            AxisMappingChanged?.Invoke();
+        }
+        finally
+        {
+            _isSwappingRoles = false;
+        }
+    }
+
+    private void OnMotorChannelChangeRequested(int currentMotorIndex, int targetMotorIndex)
+    {
+        if (_isSwappingRoles) return;
+        _isSwappingRoles = true;
+        try
+        {
+            if (!RoleMap.TrySwapMotorChannels(currentMotorIndex, targetMotorIndex))
+            {
+                AllAxes[currentMotorIndex].ResetSelectedMotorChannelInternal();
+                return;
+            }
+
+            double minA = AllAxes[currentMotorIndex].MinLimitMm;
+            double maxA = AllAxes[currentMotorIndex].MaxLimitMm;
+            double minB = AllAxes[targetMotorIndex].MinLimitMm;
+            double maxB = AllAxes[targetMotorIndex].MaxLimitMm;
+            AllAxes[currentMotorIndex].SetStrokeLimitsMm(minB, maxB);
+            AllAxes[targetMotorIndex].SetStrokeLimitsMm(minA, maxA);
+
+            for (int m = 0; m < AllAxes.Count; m++)
+                AllAxes[m].SetAssignedRoleSlotInternal(RoleMap.GetRoleForMotor(m), _selectedSceneMode);
+            RebuildActiveAxes();
 
             SyncControllerAxisNamesFromRoles();
             RefreshLegendTexts();
@@ -482,7 +622,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void SyncAvailableRoleOptions()
     {
-        int targetCount = _selectedSceneMode == MachineSceneMode.Gantry3Axis ? 3 : Tmcm6110Controller.TotalAxes;
+        int targetCount = _selectedAxisCount;
         while (AvailableRoleOptions.Count < targetCount)
             AvailableRoleOptions.Add(new SelectableOption<int>(AvailableRoleOptions.Count, string.Empty));
         while (AvailableRoleOptions.Count > targetCount)
@@ -490,12 +630,44 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
         for (int slot = 0; slot < AvailableRoleOptions.Count; slot++)
             AvailableRoleOptions[slot].Label = GetRoleOptionLabel(slot, _selectedSceneMode);
+
+        foreach (var vm in AllAxes)
+            vm.NotifyRoleOptionsChanged();
     }
 
     private static string GetRoleOptionLabel(int roleSlot, MachineSceneMode mode)
     {
         return mode switch
         {
+            MachineSceneMode.LinearStage1Axis => roleSlot switch
+            {
+                0 => LanguageManager.Get("X 軸 (線性滑台)", "X-Axis (Linear Stage)"),
+                _ => $"Role {roleSlot}"
+            },
+            MachineSceneMode.RotaryTable1Axis => roleSlot switch
+            {
+                0 => LanguageManager.Get("R 軸 (旋轉分度盤)", "R-Axis (Rotary Table)"),
+                _ => $"Role {roleSlot}"
+            },
+            MachineSceneMode.XyStage2Axis => roleSlot switch
+            {
+                0 => LanguageManager.Get("X 軸 (左右橫移)", "X-Axis (Left/Right)"),
+                1 => LanguageManager.Get("Y 軸 (前後移動)", "Y-Axis (Front/Back)"),
+                _ => $"Role {roleSlot}"
+            },
+            MachineSceneMode.XzGantry2Axis => roleSlot switch
+            {
+                0 => LanguageManager.Get("Z 軸 (升降)", "Z-Axis (Vertical)"),
+                1 => LanguageManager.Get("X 軸 (左右)", "X-Axis (Left/Right)"),
+                _ => $"Role {roleSlot}"
+            },
+            MachineSceneMode.XyRotary3Axis => roleSlot switch
+            {
+                0 => LanguageManager.Get("R 軸 (旋轉載台)", "R-Axis (Rotary)"),
+                1 => LanguageManager.Get("Y 軸 (前後)", "Y-Axis (Front/Back)"),
+                2 => LanguageManager.Get("X 軸 (左右)", "X-Axis (Left/Right)"),
+                _ => $"Role {roleSlot}"
+            },
             MachineSceneMode.DualGantry6Axis => roleSlot switch
             {
                 0 => LanguageManager.Get("Z1 (左站升降)", "Z1 (Left Vert)"),
@@ -506,6 +678,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
                 5 => LanguageManager.Get("X2 (右站左右)", "X2 (Right Cross)"),
                 _ => $"Role {roleSlot}"
             },
+            MachineSceneMode.GantryRotary4Axis or
+            MachineSceneMode.GantryDualRotary5Axis or
             MachineSceneMode.GantryRotaryAux6Axis => roleSlot switch
             {
                 0 => LanguageManager.Get("Z 軸 (升降)", "Z-Axis (Vertical)"),
@@ -526,16 +700,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
                 5 => LanguageManager.Get("J6 (法蘭旋轉)", "J6 (Flange)"),
                 _ => $"Role {roleSlot}"
             },
-            MachineSceneMode.LinearBench6Axis => roleSlot switch
-            {
-                0 => LanguageManager.Get("Ch 0 (滑軌 #0)", "Ch 0 (Rail #0)"),
-                1 => LanguageManager.Get("Ch 1 (滑軌 #1)", "Ch 1 (Rail #1)"),
-                2 => LanguageManager.Get("Ch 2 (滑軌 #2)", "Ch 2 (Rail #2)"),
-                3 => LanguageManager.Get("Ch 3 (滑軌 #3)", "Ch 3 (Rail #3)"),
-                4 => LanguageManager.Get("Ch 4 (滑軌 #4)", "Ch 4 (Rail #4)"),
-                5 => LanguageManager.Get("Ch 5 (滑軌 #5)", "Ch 5 (Rail #5)"),
-                _ => $"Role {roleSlot}"
-            },
+            MachineSceneMode.LinearBench6Axis =>
+                LanguageManager.Get($"Ch {roleSlot} (滑軌 #{roleSlot})", $"Ch {roleSlot} (Rail #{roleSlot})"),
             _ => roleSlot switch
             {
                 0 => LanguageManager.Get("Z 軸 (升降)", "Z-Axis (Vertical)"),
@@ -551,12 +717,25 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         for (int m = 0; m < Tmcm6110Controller.TotalAxes; m++)
         {
             int role = RoleMap.GetRoleForMotor(m);
+            if (role >= _selectedAxisCount)
+            {
+                Controller.GetAxis(m).AxisName = $"A{m} (Unused)";
+                continue;
+            }
+
             Controller.GetAxis(m).AxisName = _selectedSceneMode switch
             {
+                MachineSceneMode.LinearStage1Axis => role == 0 ? "X" : $"A{m}",
+                MachineSceneMode.RotaryTable1Axis => role == 0 ? "R" : $"A{m}",
+                MachineSceneMode.XyStage2Axis => role switch { 0 => "X", 1 => "Y", _ => $"A{m}" },
+                MachineSceneMode.XzGantry2Axis => role switch { 0 => "Z", 1 => "X", _ => $"A{m}" },
+                MachineSceneMode.XyRotary3Axis => role switch { 0 => "R", 1 => "Y", 2 => "X", _ => $"A{m}" },
                 MachineSceneMode.DualGantry6Axis => role switch
                 {
                     0 => "Z1", 1 => "Y1", 2 => "X1", 3 => "Z2", 4 => "Y2", 5 => "X2", _ => $"A{m}"
                 },
+                MachineSceneMode.GantryRotary4Axis or
+                MachineSceneMode.GantryDualRotary5Axis or
                 MachineSceneMode.GantryRotaryAux6Axis => role switch
                 {
                     0 => "Z", 1 => "Y", 2 => "X", 3 => "R", 4 => "A", 5 => "B", _ => $"A{m}"
@@ -587,6 +766,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             RestoreStrokesByRole(strokeByRole);
             for (int m = 0; m < AllAxes.Count; m++)
                 AllAxes[m].SetAssignedRoleSlotInternal(RoleMap.GetRoleForMotor(m), _selectedSceneMode);
+            RebuildActiveAxes();
             SyncControllerAxisNamesFromRoles();
             RefreshLegendTexts();
             AxisMappingChanged?.Invoke();
@@ -599,45 +779,71 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void ApplyOriginPresets()
     {
-        ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(2), yIdx: GetMotorIndexForRole(1));
-        ApplyZOriginToAxis(zIdx: GetMotorIndexForRole(0));
-
-        if (_selectedSceneMode == MachineSceneMode.DualGantry6Axis)
+        switch (_selectedSceneMode)
         {
-            ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(5), yIdx: GetMotorIndexForRole(4));
-            ApplyZOriginToAxis(zIdx: GetMotorIndexForRole(3));
+            case MachineSceneMode.LinearStage1Axis:
+                ApplyXOriginToAxis(GetMotorIndexForRole(0));
+                break;
+            case MachineSceneMode.XyStage2Axis:
+                ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(0), yIdx: GetMotorIndexForRole(1));
+                break;
+            case MachineSceneMode.XzGantry2Axis:
+                ApplyXOriginToAxis(GetMotorIndexForRole(1));
+                ApplyZOriginToAxis(GetMotorIndexForRole(0));
+                break;
+            case MachineSceneMode.XyRotary3Axis:
+                ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(2), yIdx: GetMotorIndexForRole(1));
+                break;
+            case MachineSceneMode.Gantry3Axis:
+            case MachineSceneMode.GantryRotary4Axis:
+            case MachineSceneMode.GantryDualRotary5Axis:
+            case MachineSceneMode.GantryRotaryAux6Axis:
+                ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(2), yIdx: GetMotorIndexForRole(1));
+                ApplyZOriginToAxis(GetMotorIndexForRole(0));
+                break;
+            case MachineSceneMode.DualGantry6Axis:
+                ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(2), yIdx: GetMotorIndexForRole(1));
+                ApplyZOriginToAxis(GetMotorIndexForRole(0));
+                ApplyXyOriginToAxisPair(xIdx: GetMotorIndexForRole(5), yIdx: GetMotorIndexForRole(4));
+                ApplyZOriginToAxis(GetMotorIndexForRole(3));
+                break;
         }
     }
 
     private void ApplyXyOriginToAxisPair(int xIdx, int yIdx)
     {
-        var axX = AllAxes[xIdx];
-        var axY = AllAxes[yIdx];
-        double lenX = axX.StrokeLengthMm;
-        double lenY = axY.StrokeLengthMm;
+        ApplyXOriginToAxis(xIdx);
+        ApplyYOriginToAxis(yIdx);
+    }
 
+    private void ApplyXOriginToAxis(int xIdx)
+    {
+        var axX = AllAxes[xIdx];
+        double lenX = axX.StrokeLengthMm;
         (double minX, double maxX) = _selectedXyOrigin switch
         {
             XyOriginPreset.FrontLeft or XyOriginPreset.BackLeft => (0.0, lenX),
             XyOriginPreset.FrontRight or XyOriginPreset.BackRight => (-lenX, 0.0),
             _ => (-lenX * 0.5, lenX * 0.5)
         };
+        axX.SetStrokeLimitsMm(minX, maxX);
+        if (_syncRfsDirectionWithOrigin)
+            SetRfsModeForOrigin(xIdx, maxX <= 0.0 ? 65 : 1);
+    }
 
+    private void ApplyYOriginToAxis(int yIdx)
+    {
+        var axY = AllAxes[yIdx];
+        double lenY = axY.StrokeLengthMm;
         (double minY, double maxY) = _selectedXyOrigin switch
         {
             XyOriginPreset.FrontLeft or XyOriginPreset.FrontRight => (0.0, lenY),
             XyOriginPreset.BackLeft or XyOriginPreset.BackRight => (-lenY, 0.0),
             _ => (-lenY * 0.5, lenY * 0.5)
         };
-
-        axX.SetStrokeLimitsMm(minX, maxX);
         axY.SetStrokeLimitsMm(minY, maxY);
-
         if (_syncRfsDirectionWithOrigin)
-        {
-            SetRfsModeForOrigin(xIdx, maxX <= 0.0 ? 65 : 1);
             SetRfsModeForOrigin(yIdx, maxY <= 0.0 ? 65 : 1);
-        }
     }
 
     private void ApplyZOriginToAxis(int zIdx)
@@ -677,20 +883,15 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RefreshOptionLabels()
     {
-        SyncAvailableRoleOptions();
-
-        foreach (var opt in AvailableSceneModes)
+        foreach (var opt in AvailableAxisCounts)
         {
-            opt.Label = opt.Value switch
-            {
-                MachineSceneMode.Gantry3Axis => LanguageManager.Get("3 軸龍門（預設 Z/Y/X）", "3-Axis Gantry (Default Z/Y/X)"),
-                MachineSceneMode.DualGantry6Axis => LanguageManager.Get("6 軸雙龍門（雙工位 Z1/Y1/X1 + Z2/Y2/X2）", "6-Axis Dual Gantry (Stations 1 & 2)"),
-                MachineSceneMode.GantryRotaryAux6Axis => LanguageManager.Get("6 軸龍門 + 旋轉/輔助軸 (XYZ + R/A/B)", "6-Axis Gantry + Rotary/Aux (XYZ + R/A/B)"),
-                MachineSceneMode.RobotArm6Dof => LanguageManager.Get("6 軸關節機械手臂 (J1~J6)", "6-Axis Robot Arm (J1-J6)"),
-                MachineSceneMode.LinearBench6Axis => LanguageManager.Get("6 軸獨立線性測試台 (Ch 0~5)", "6-Axis Linear Test Bench (Ch 0-5)"),
-                _ => opt.Value.ToString()
-            };
+            opt.Label = opt.Value == 1
+                ? LanguageManager.Get("1 軸 (Single Axis)", "1 Axis (Single)")
+                : LanguageManager.Get($"{opt.Value} 軸 ({opt.Value} Axes)", $"{opt.Value} Axes");
         }
+
+        SyncAvailableRoleOptions();
+        RefreshSceneModeOptionLabels();
 
         foreach (var opt in AvailableXyOrigins)
         {
@@ -717,6 +918,29 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private void RefreshSceneModeOptionLabels()
+    {
+        foreach (var opt in AvailableSceneModes)
+        {
+            opt.Label = opt.Value switch
+            {
+                MachineSceneMode.LinearStage1Axis => LanguageManager.Get("1 軸線性滑台 (X)", "1-Axis Linear Stage (X)"),
+                MachineSceneMode.RotaryTable1Axis => LanguageManager.Get("1 軸旋轉分度盤 (R)", "1-Axis Rotary Table (R)"),
+                MachineSceneMode.XyStage2Axis => LanguageManager.Get("2 軸 XY 定位平台 (X/Y)", "2-Axis XY Stage (X/Y)"),
+                MachineSceneMode.XzGantry2Axis => LanguageManager.Get("2 軸 XZ 垂直龍門 (X/Z)", "2-Axis XZ Gantry (X/Z)"),
+                MachineSceneMode.Gantry3Axis => LanguageManager.Get("3 軸龍門（預設 Z/Y/X）", "3-Axis Gantry (Default Z/Y/X)"),
+                MachineSceneMode.XyRotary3Axis => LanguageManager.Get("3 軸 XY + 旋轉台 (X/Y/R)", "3-Axis XY + Rotary Table (X/Y/R)"),
+                MachineSceneMode.GantryRotary4Axis => LanguageManager.Get("4 軸龍門 + 旋轉主軸 (XYZ + R)", "4-Axis Gantry + Rotary Spindle (XYZ+R)"),
+                MachineSceneMode.GantryDualRotary5Axis => LanguageManager.Get("5 軸龍門 + 雙旋轉軸 (XYZ + R/A)", "5-Axis Gantry + Dual Rotary (XYZ+R/A)"),
+                MachineSceneMode.DualGantry6Axis => LanguageManager.Get("6 軸雙龍門（雙工位 Z1/Y1/X1 + Z2/Y2/X2）", "6-Axis Dual Gantry (Stations 1 & 2)"),
+                MachineSceneMode.GantryRotaryAux6Axis => LanguageManager.Get("6 軸龍門 + 旋轉/輔助軸 (XYZ + R/A/B)", "6-Axis Gantry + Rotary/Aux (XYZ + R/A/B)"),
+                MachineSceneMode.RobotArm6Dof => LanguageManager.Get("6 軸關節機械手臂 (J1~J6)", "6-Axis Robot Arm (J1-J6)"),
+                MachineSceneMode.LinearBench6Axis => LanguageManager.Get($"{_selectedAxisCount} 軸獨立線性測試台 (Ch 0~{_selectedAxisCount - 1})", $"{_selectedAxisCount}-Rail Linear Test Bench (Ch 0-{_selectedAxisCount - 1})"),
+                _ => opt.Value.ToString()
+            };
+        }
+    }
+
     private void RefreshLegendTexts()
     {
         int m0 = GetMotorIndexForRole(0);
@@ -728,6 +952,55 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
         switch (_selectedSceneMode)
         {
+            case MachineSceneMode.LinearStage1Axis:
+                LegendTitle = LanguageManager.Get("3D 單軸線性滑台視圖 (1 軸)", "3D 1-Axis Linear Stage View");
+                LegendLine1 = LanguageManager.Get($"• 紅色滑座 X 軸 = Motor #{m0} (左右線性移動)", $"• Red Linear Stage X = Motor #{m0}");
+                LegendLine2 = LanguageManager.Get("• 兩端紅綠燈號 = -Limit / +Limit 硬體極限", "• End LEDs = -Limit / +Limit Switches");
+                LegendLine3 = LanguageManager.Get("• 白色方塊 = 0 mm 機械原點基準", "• White Block = 0 mm Origin Reference");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = 單軸掃描往復軌跡", "• Gold Trail = Linear Axis Trajectory");
+                break;
+            case MachineSceneMode.RotaryTable1Axis:
+                LegendTitle = LanguageManager.Get("3D 單軸旋轉分度盤視圖 (1 軸)", "3D 1-Axis Rotary Table View");
+                LegendLine1 = LanguageManager.Get($"• 旋轉盤面 R 軸 = Motor #{m0} (±Limit 對應 ±180°)", $"• Rotary Platter R = Motor #{m0} (±180° Span)");
+                LegendLine2 = LanguageManager.Get("• 金黃色指針 bar = 目前旋轉角度方向", "• Amber Pointer Bar = Angular Index");
+                LegendLine3 = LanguageManager.Get("• 白色基準塊 = 0 mm (0°) 原點指標", "• White Post = 0 mm (0°) Reference");
+                LegendLine4 = LanguageManager.Get("• 金色弧線光帶 = 圓周分度運動軌跡", "• Gold Arc = Rotary Sweep Trajectory");
+                break;
+            case MachineSceneMode.XyStage2Axis:
+                LegendTitle = LanguageManager.Get("3D 雙軸 XY 定位平台視圖 (2 軸)", "3D 2-Axis XY Positioning Stage");
+                LegendLine1 = LanguageManager.Get($"• 紅色左右橫移 X 軸 = Motor #{m0}", $"• Red X Carriage = Motor #{m0}");
+                LegendLine2 = LanguageManager.Get($"• 綠色前後橋架 Y 軸 = Motor #{m1}", $"• Green Y Bridge = Motor #{m1}");
+                LegendLine3 = LanguageManager.Get("• 三色原點座標軸 = 0 mm 平面基準 (支援四角預設)", "• White Triad = 0 mm Planar Origin");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = XY 平面二軸插補軌跡", "• Gold Trail = 2-Axis XY Trajectory");
+                break;
+            case MachineSceneMode.XzGantry2Axis:
+                LegendTitle = LanguageManager.Get("3D 雙軸 XZ 垂直龍門視圖 (2 軸)", "3D 2-Axis XZ Vertical Gantry");
+                LegendLine1 = LanguageManager.Get($"• 藍色垂直主軸 Z 軸 = Motor #{m0}", $"• Blue Vertical Spindle Z = Motor #{m0}");
+                LegendLine2 = LanguageManager.Get($"• 紅色橫樑滑座 X 軸 = Motor #{m1}", $"• Red Crossbeam Carriage X = Motor #{m1}");
+                LegendLine3 = LanguageManager.Get("• 各軸兩側 LED = ±Limit 極限開關狀態", "• Rail LEDs = ±Limit Switch Indicators");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = XZ 垂直剖面二軸軌跡", "• Gold Trail = 2-Axis XZ Trajectory");
+                break;
+            case MachineSceneMode.XyRotary3Axis:
+                LegendTitle = LanguageManager.Get("3D XY + 旋轉載台視圖 (3 軸)", "3D XY + Rotary Platter Stage (3-Axis)");
+                LegendLine1 = LanguageManager.Get($"• 旋轉載台 R = Motor #{m0} | Y = M#{m1} | X = M#{m2}", $"• Rotary R = M#{m0} | Y = M#{m1} | X = M#{m2}");
+                LegendLine2 = LanguageManager.Get("• 上方 XY 橋架帶動固定高度加工頭位移", "• Overhead XY Frame Moves Processing Head");
+                LegendLine3 = LanguageManager.Get("• 底部轉盤即時反應 R 軸角度與極限狀態", "• Platter Rotates & Displays R ±Limits");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = 機台 XY 平面運動軌跡", "• Gold Trail = XY Planar Motion Path");
+                break;
+            case MachineSceneMode.GantryRotary4Axis:
+                LegendTitle = LanguageManager.Get("3D 龍門 + 旋轉主軸視圖 (4 軸)", "3D Gantry + Rotary Spindle (4-Axis)");
+                LegendLine1 = LanguageManager.Get($"• 龍門主軸: Z=M#{m0} 藍 / Y=M#{m1} 綠 / X=M#{m2} 紅", $"• Gantry: Z=M#{m0} / Y=M#{m1} / X=M#{m2}");
+                LegendLine2 = LanguageManager.Get($"• R 軸旋轉夾頭 = Motor #{m3} (橘黃指針標示)", $"• R Rotary Chuck = Motor #{m3} (Amber Flag)");
+                LegendLine3 = LanguageManager.Get("• 支援 Z/Y/X 四角原點切換與四軸插補演示", "• Supports Corner Origins & 4-Axis Demo");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = 3D 工具尖端 (TCP) 軌跡", "• Gold Ribbon = 3D Tool Center Point Trail");
+                break;
+            case MachineSceneMode.GantryDualRotary5Axis:
+                LegendTitle = LanguageManager.Get("3D 五軸龍門雙旋轉視圖 (5 軸)", "3D 5-Axis Gantry + Dual Rotary");
+                LegendLine1 = LanguageManager.Get($"• 龍門主軸: Z=M#{m0} 藍 / Y=M#{m1} 綠 / X=M#{m2} 紅", $"• Gantry: Z=M#{m0} / Y=M#{m1} / X=M#{m2}");
+                LegendLine2 = LanguageManager.Get($"• R (主軸旋)=M#{m3} | A (旋轉台)=M#{m4}", $"• R (Spindle)=M#{m3} | A (Table)=M#{m4}");
+                LegendLine3 = LanguageManager.Get("• 雙獨立旋轉極限 LED 與三色 0 mm 基準", "• Dual Rotary ±Limit LEDs & White Origin");
+                LegendLine4 = LanguageManager.Get("• 金色光帶 = 3D 工具尖端 (TCP) 軌跡", "• Gold Ribbon = 3D Tool Center Point Trail");
+                break;
             case MachineSceneMode.DualGantry6Axis:
                 LegendTitle = LanguageManager.Get("3D 雙龍門雙工位視圖 (6 軸)", "3D Dual-Gantry Dual-Station (6-Axis)");
                 LegendLine1 = LanguageManager.Get($"• 左站: Z1=M#{m0} / Y1=M#{m1} / X1=M#{m2}", $"• Left: Z1=M#{m0} / Y1=M#{m1} / X1=M#{m2}");
@@ -750,11 +1023,13 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
                 LegendLine4 = LanguageManager.Get("• 金色光帶 = 手臂法蘭 TCP 空間軌跡", "• Gold Ribbon = Flange TCP 3D Trajectory");
                 break;
             case MachineSceneMode.LinearBench6Axis:
-                LegendTitle = LanguageManager.Get("3D 六軸線性測試台 (Ch 0~5)", "3D 6-Axis Linear Test Bench (Ch 0-5)");
-                LegendLine1 = LanguageManager.Get($"• 滑軌映射: Ch0=M#{m0}, Ch1=M#{m1}, Ch2=M#{m2}", $"• Rails: Ch0=M#{m0}, Ch1=M#{m1}, Ch2=M#{m2}");
-                LegendLine2 = LanguageManager.Get($"• 滑軌映射: Ch3=M#{m3}, Ch4=M#{m4}, Ch5=M#{m5}", $"• Rails: Ch3=M#{m3}, Ch4=M#{m4}, Ch5=M#{m5}");
+                LegendTitle = LanguageManager.Get($"3D {_selectedAxisCount} 軸獨立線性測試台 (Ch 0~{_selectedAxisCount - 1})", $"3D {_selectedAxisCount}-Rail Linear Test Bench (Ch 0-{_selectedAxisCount - 1})");
+                LegendLine1 = "• " + string.Join(", ", Enumerable.Range(0, Math.Min(3, _selectedAxisCount)).Select(r => $"Ch{r}=M#{GetMotorIndexForRole(r)}"));
+                LegendLine2 = _selectedAxisCount > 3
+                    ? "• " + string.Join(", ", Enumerable.Range(3, _selectedAxisCount - 3).Select(r => $"Ch{r}=M#{GetMotorIndexForRole(r)}"))
+                    : LanguageManager.Get("• 依上方「使用軸數」動態調整並行滑軌數量", "• Rail count scales dynamically with Active Axes");
                 LegendLine3 = LanguageManager.Get("• 中央灰藍橫條 = 0 mm 原點 | 兩端 = ±Limit LED", "• Center Bar = 0 mm | Ends = ±Limit LEDs");
-                LegendLine4 = LanguageManager.Get("• 適用全 6 軸通訊與極限批量驗證", "• Ideal for 6-axis protocol & limit testing");
+                LegendLine4 = LanguageManager.Get("• 適用全通道通訊與極限批量驗證", "• Ideal for per-channel protocol & limit testing");
                 break;
             default:
                 LegendTitle = LanguageManager.Get("3D 龍門機構動態視圖 (Z-Y-X 映射)", "3D Gantry Stage Live View (Z-Y-X Mapping)");
@@ -965,11 +1240,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.CLE, 0, 0, 0));
     }
 
-    private void OnControllerPacketProcessed(TmclCommandPacket cmd, TmclReplyPacket reply)
+    private void OnProtocolTraceGenerated(ProtocolTraceEvent trace)
     {
         Interlocked.Increment(ref _totalRxPackets);
 
-        if (HidePollingPacketsInLog && cmd.IsPollingQuery)
+        if (HidePollingPacketsInLog && trace.IsPollingQuery)
         {
             Application.Current?.Dispatcher.BeginInvoke(() => OnPropertyChanged(nameof(TotalRxPackets)));
             return;
@@ -977,11 +1252,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
         var entry = new PacketLogEntry(
             DateTime.Now.ToString("HH:mm:ss.fff"),
-            "RX -> TX",
-            cmd.ToHexString(),
-            cmd.ToMnemonicDescription(Controller.GetAxisDisplayLabel),
-            reply.ToHexString(),
-            reply.ToDescription()
+            trace.Direction,
+            trace.RawRequest,
+            trace.DecodedRequest,
+            trace.RawReply,
+            trace.DecodedReply
         );
 
         Application.Current?.Dispatcher.BeginInvoke(() =>
@@ -1015,7 +1290,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public void Dispose()
     {
         LanguageManager.LanguageChanged -= OnLanguageChanged;
-        Controller.PacketProcessed -= OnControllerPacketProcessed;
+        SerialServer.ProtocolAdapter.TraceGenerated -= OnProtocolTraceGenerated;
         SerialServer.StatusLogMessage -= OnServerStatusLogMessage;
         SerialServer.Dispose();
     }

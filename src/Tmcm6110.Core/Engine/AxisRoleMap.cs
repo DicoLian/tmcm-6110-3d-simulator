@@ -39,13 +39,15 @@ public sealed class AxisRoleMap
 
         if (activeAxisCount < 1 || activeAxisCount > Tmcm6110Controller.TotalAxes)
             return false;
-        if (motorIndex < 0 || motorIndex >= activeAxisCount)
+        if (motorIndex < 0 || motorIndex >= Tmcm6110Controller.TotalAxes)
             return false;
         if (targetRoleSlot < 0 || targetRoleSlot >= activeAxisCount)
             return false;
 
         int oldRole = _motorToRole[motorIndex];
         previousRoleSlot = oldRole;
+        if (oldRole < 0 || oldRole >= activeAxisCount)
+            return false;
         if (oldRole == targetRoleSlot)
             return false;
 
@@ -163,6 +165,25 @@ public sealed class AxisRoleMap
         for (int m = 0; m < Tmcm6110Controller.TotalAxes; m++)
             _roleToMotor[_motorToRole[m]] = m;
 
+        return true;
+    }
+
+    public bool TrySwapMotorChannels(int motorA, int motorB)
+    {
+        if (motorA < 0 || motorA >= Tmcm6110Controller.TotalAxes)
+            return false;
+        if (motorB < 0 || motorB >= Tmcm6110Controller.TotalAxes)
+            return false;
+        if (motorA == motorB)
+            return false;
+
+        int roleA = _motorToRole[motorA];
+        int roleB = _motorToRole[motorB];
+
+        _motorToRole[motorA] = roleB;
+        _motorToRole[motorB] = roleA;
+        _roleToMotor[roleB] = motorA;
+        _roleToMotor[roleA] = motorB;
         return true;
     }
 

@@ -88,11 +88,25 @@ public partial class MainWindow : Window
                 snap.IsAlarmActive);
         }
 
-        _sceneBuilder.UpdateScene(_frameBuffer);
+        _sceneBuilder.UpdateScene(_frameBuffer.AsSpan(0, _viewModel.SelectedAxisCount));
 
         string coordPrefix = LanguageManager.IsEnglish ? "Coord:" : "座標:";
         Txt3DCoordOverlay.Text = _viewModel.SelectedSceneMode switch
         {
+            MachineSceneMode.LinearStage1Axis =>
+                $"{coordPrefix} X(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],7:F2} mm",
+            MachineSceneMode.RotaryTable1Axis =>
+                $"{coordPrefix} R(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],7:F2} mm",
+            MachineSceneMode.XyStage2Axis =>
+                $"{coordPrefix} X(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],7:F2} mm | Y(M{_viewModel.GetMotorIndexForRole(1)})={_posMmBuffer[1],7:F2} mm",
+            MachineSceneMode.XzGantry2Axis =>
+                $"{coordPrefix} X(M{_viewModel.GetMotorIndexForRole(1)})={_posMmBuffer[1],7:F2} mm | Z(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],7:F2} mm",
+            MachineSceneMode.XyRotary3Axis =>
+                $"{coordPrefix} X(M{_viewModel.GetMotorIndexForRole(2)})={_posMmBuffer[2],6:F1} | Y(M{_viewModel.GetMotorIndexForRole(1)})={_posMmBuffer[1],6:F1} | R(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],5:F1} mm",
+            MachineSceneMode.GantryRotary4Axis =>
+                $"X(M{_viewModel.GetMotorIndexForRole(2)})={_posMmBuffer[2],6:F1} Y(M{_viewModel.GetMotorIndexForRole(1)})={_posMmBuffer[1],6:F1} Z(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],5:F1} | R(M{_viewModel.GetMotorIndexForRole(3)})={_posMmBuffer[3],5:F1}",
+            MachineSceneMode.GantryDualRotary5Axis =>
+                $"X={_posMmBuffer[2],6:F1} Y={_posMmBuffer[1],6:F1} Z={_posMmBuffer[0],5:F1} | R={_posMmBuffer[3],5:F1} A={_posMmBuffer[4],5:F1}",
             MachineSceneMode.DualGantry6Axis =>
                 $"S1(X={_posMmBuffer[2],6:F1}, Y={_posMmBuffer[1],6:F1}, Z={_posMmBuffer[0],5:F1}) | S2(X={_posMmBuffer[5],6:F1}, Y={_posMmBuffer[4],6:F1}, Z={_posMmBuffer[3],5:F1}) mm",
             MachineSceneMode.GantryRotaryAux6Axis =>
@@ -100,9 +114,22 @@ public partial class MainWindow : Window
             MachineSceneMode.RobotArm6Dof =>
                 $"J1={_posMmBuffer[0],5:F1} J2={_posMmBuffer[1],5:F1} J3={_posMmBuffer[2],5:F1} J4={_posMmBuffer[3],5:F1} J5={_posMmBuffer[4],5:F1} J6={_posMmBuffer[5],5:F1}",
             MachineSceneMode.LinearBench6Axis =>
-                $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} Ch2={_posMmBuffer[2],5:F1} Ch3={_posMmBuffer[3],5:F1} Ch4={_posMmBuffer[4],5:F1} Ch5={_posMmBuffer[5],5:F1} mm",
+                FormatLinearBenchCoord(_viewModel.SelectedAxisCount),
             _ =>
                 $"{coordPrefix} X(M{_viewModel.GetMotorIndexForRole(2)})={_posMmBuffer[2],7:F2} mm | Y(M{_viewModel.GetMotorIndexForRole(1)})={_posMmBuffer[1],7:F2} mm | Z(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],7:F2} mm"
+        };
+    }
+
+    private string FormatLinearBenchCoord(int axisCount)
+    {
+        return axisCount switch
+        {
+            1 => $"Ch0(M{_viewModel.GetMotorIndexForRole(0)})={_posMmBuffer[0],6:F1} mm",
+            2 => $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} mm",
+            3 => $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} Ch2={_posMmBuffer[2],5:F1} mm",
+            4 => $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} Ch2={_posMmBuffer[2],5:F1} Ch3={_posMmBuffer[3],5:F1} mm",
+            5 => $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} Ch2={_posMmBuffer[2],5:F1} Ch3={_posMmBuffer[3],5:F1} Ch4={_posMmBuffer[4],5:F1} mm",
+            _ => $"Ch0={_posMmBuffer[0],5:F1} Ch1={_posMmBuffer[1],5:F1} Ch2={_posMmBuffer[2],5:F1} Ch3={_posMmBuffer[3],5:F1} Ch4={_posMmBuffer[4],5:F1} Ch5={_posMmBuffer[5],5:F1} mm"
         };
     }
 

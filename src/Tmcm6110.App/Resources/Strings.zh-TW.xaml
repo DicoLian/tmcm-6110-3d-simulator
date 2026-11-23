@@ -58,10 +58,12 @@
     <sys:String x:Key="TabAxesControl">軸向監控與控制</sys:String>
     <sys:String x:Key="TabSettings">機台與系統設定</sys:String>
     <sys:String x:Key="GrpMachineOrigin">3D 機構模式與原點位置</sys:String>
+    <sys:String x:Key="LblAxisCount">使用軸數 (Axes):</sys:String>
     <sys:String x:Key="LblSceneMode">3D 機構模式:</sys:String>
     <sys:String x:Key="LblXyOrigin">XY 機械原點:</sys:String>
     <sys:String x:Key="LblZOrigin">Z 軸原點:</sys:String>
     <sys:String x:Key="ChkSyncRfsOrigin">切換原點時同步更新 RFS 原點搜尋方向 (#193)</sys:String>
+    <sys:String x:Key="TipMotorChannelSelect">切換此軸綁定的實體馬達通道 (Motor #0 ~ #5)</sys:String>
     <sys:String x:Key="TipAxisRoleSelect">切換此馬達對應的 3D 軸向角色（會與目標軸自動互換）</sys:String>
     <sys:String x:Key="LblAxisMapping">軸向映射預設:</sys:String>
     <sys:String x:Key="BtnMappingZyx">預設 Z-Y-X (M0=Z, M1=Y, M2=X)</sys:String>

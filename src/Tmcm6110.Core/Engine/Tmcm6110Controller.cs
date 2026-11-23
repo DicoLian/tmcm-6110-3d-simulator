@@ -1,4 +1,5 @@
 using System.Text;
+using Tmcm6110.Core.Abstractions;
 using Tmcm6110.Core.Protocol;
 
 namespace Tmcm6110.Core.Engine;
@@ -8,9 +9,11 @@ namespace Tmcm6110.Core.Engine;
 /// Processes 9-Byte Binary TMCL Packets, manages Axis 0..5 states, Bank 0/1/2 Global Parameters,
 /// Digital/Analog I/O, Multi-Axis Interpolation (MVP COORD), and Command 138 Async Position Reached Events.
 /// </summary>
-public class Tmcm6110Controller
+public class Tmcm6110Controller : IMotionController
 {
     public const int TotalAxes = 6;
+    public string ControllerName => "TMCM-6110 (TMCL)";
+    public int AxisCount => TotalAxes;
 
     private readonly object _controllerLock = new();
     private readonly AxisState[] _axes = new AxisState[TotalAxes];
@@ -73,6 +76,26 @@ public class Tmcm6110Controller
         if (index < 0 || index >= TotalAxes)
             throw new ArgumentOutOfRangeException(nameof(index));
         return _axes[index];
+    }
+
+    public IMotionAxis GetMotionAxis(int index) => GetAxis(index);
+
+    public void StopAll()
+    {
+        for (int i = 0; i < TotalAxes; i++)
+            _axes[i].StopMotor();
+    }
+
+    public void HomeAll()
+    {
+        for (int i = 0; i < TotalAxes; i++)
+            _axes[i].StartHoming();
+    }
+
+    public void ClearAllFaults()
+    {
+        for (int i = 0; i < TotalAxes; i++)
+            _axes[i].ClearFault();
     }
 
     public IReadOnlyList<AxisState> Axes => _axes;
