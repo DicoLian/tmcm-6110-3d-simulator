@@ -1,6 +1,6 @@
 **English** | [繁體中文](README.zh-TW.md)
 
-# TMCM-6110 Motion Controller 3D Simulator (1–6 Axes)
+# TMCM-6110 TMCL Protocol & 3D Motion Controller Simulator (1–6 Axes)
 
 ![.NET 8.0](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)
 ![WPF 3D](https://img.shields.io/badge/UI-WPF%20Native%203D-0078D4?logo=windows)
@@ -11,46 +11,89 @@
 
 ![TMCM-6110 3D Simulator Demo](./demo.gif)
 
-## What It Is
+▶ [Watch Demo Video](#demo-video) | [Direct MP4 (`demo_highlight.mp4`)](./demo_highlight.mp4)
 
-A standalone Windows **Digital Twin & Virtual Commissioning 3D Simulator** for the **Trinamic (ADI) TMCM-6110** 6-axis stepper motor controller, built with C# and .NET 8.0. It lets motion-control and host software developers develop, test, and verify **9-Byte Binary TMCL** applications without physical hardware or collision risk—complete with a configurable **1–6 axis** control dashboard, **12 native WPF 3D machine scenes**, live Packet Sniffer, dynamic motor/role mapping, and interactive fault injection.
+## Why This Project?
 
-## Key Highlights
+Motion-control and host software development typically has to wait until physical controller boards, motor drives, or assembled machines arrive before integration testing can begin.
 
-- **9-Byte Binary TMCL Engine**: Full framing, 8-bit additive checksum validation, and sliding-window synchronization per [`TMCL_reference.pdf`](./TMCL_reference.pdf). All 6 axes (`Axis 0..5`) remain active internally regardless of the selected UI axis count so multi-axis host polling never times out.
-- **1–6 Active Axes & 12 Native WPF `Viewport3D` Scenes**: Zero third-party 3D dependencies; switch between **1, 2, 3, 4, 5, or 6 active axes** in **Tab 2 (`Machine & System Settings`)** to filter and preview 12 machine kinematics (linear stages, rotary tables, XY/XZ gantries, 3-axis gantry + rotary, 4/5-axis rotary machines, dual-station 6-axis gantry, 6-DOF robot arm, and a dynamic 1–6 rail linear test bench) with 3D limit switch blocks and golden Tool Center Point (TCP) trails.
-- **Live Physical Motor Channel (`Motor #0..#5`) & 3D Role Swapping**: Each axis card in **Tab 1 (`Axes Monitor & Control`)** provides dual dropdowns to reassign both the physical controller channel (`Motor #0..#5`) and its 3D machine role in real time—with automatic bijective swapping, stroke-limit transfer, and quick **`Default Z-Y-X`** / **`Standard X-Y-Z`** mapping presets in Tab 2.
-- **Origin Presets, Custom Travel Strokes & Limit Stop**: Configure 5 XY origin presets (Table Center + 4 corners) and 3 Z origin presets (Center / Top / Bottom) with optional `RFS (#193)` homing-direction sync, per-axis `Min/Max (mm)` stroke bounds, `Steps/mm` scaling, and `#12/#13` limit-switch auto-stop toggles.
-- **Dual Transport & Fault Injection**: Connects via virtual COM port pairs (`com0com` `COM10 <-> COM11`) or the built-in zero-driver TCP server (`127.0.0.1:4001`), supporting `GAP 8` polling, `Cmd 138` asynchronous position-reached events (`Status=100` ACK + unsolicited `Status=128`), virtual/forced limit switches (`+Limit #10` / `-Limit #11` / `#9`), and StallGuard2 (`#207`) / TMC262 (`#208`) alarm injection with `CLE (Cmd 36)` recovery.
-- **Tabbed Bilingual UI & Decoupled Extensible Core**: Auto-detects Windows culture on startup with a **`🌐 EN / 繁中`** toggle in **Tab 2 (`Machine & System Settings`)**, backed by decoupled motion (`IMotionController`/`IMotionAxis`), protocol (`IProtocolAdapter`/`ByteStreamTransportServer`), and 3D scene (`IMachine3DScene`) abstractions.
+**TMCM-6110 3D Simulator** provides a standalone Windows **Trinamic (ADI) TMCM-6110** simulated controller with real-time 3D machine visualization:
 
-## Quick Start (Zero Hardware / 3 Steps)
+> Host Software / Scripts → 9-Byte Binary TMCL Packets → TCP / Serial COM → TMCM-6110 Simulated Controller → 3D Machine Visualization
 
-### Option A — Prebuilt Binary (No Compiler Needed)
+It lets developers verify and debug host integrations before hardware is ready:
+
+- 9-Byte Binary TMCL packet framing and 8-bit additive checksum validation (per [`TMCL_reference.pdf`](./TMCL_reference.pdf))
+- Common command workflows (`SAP`, `GAP`, `MVP`, `RFS`, etc.) and parameter read/write behavior
+- TCP / Serial COM master-slave communication, `GAP 8` status polling, and `Cmd 138` asynchronous position-reached events
+- 1–6 axis coordinated motion, limit switches, StallGuard2 / TMC262 alarms, and homing sequences
+- Custom host UI, motion-control logic, or automated test scripts
+- TMCL-IDE `.ini` / `.tmc` configuration loading and physical-channel / 3D role mapping
+
+Built with C# / .NET 8.0 and native WPF as a Windows **Digital Twin & Virtual Commissioning** tool for early development, protocol integration, and demos; it **does not replace physical hardware verification** for electrical wiring, safety circuits, or real-machine dynamics.
+
+## 30-Second Quick Start
+
+### Option 1: Download Prebuilt Binary (No Compiler Needed)
 
 1. Download the latest `win-x64` `.zip` from [GitHub Releases](https://github.com/DicoLian/tmcm-6110-3d-simulator/releases) and extract it.
-2. Double-click `Tmcm6110.App.exe` to launch the 3D simulator (Local TCP `127.0.0.1:4001` starts automatically).
-3. Run `Tmcm6110.HostTester.exe` and choose **`[2]`** (Local TCP `127.0.0.1:4001`) to watch the 3D gantry move immediately.
+2. Run `Tmcm6110.App.exe` to launch the 3D simulator (automatically starts the local TCP server on `127.0.0.1:4001`).
+3. Run `Tmcm6110.HostTester.exe` and choose **`[2]`** (Local TCP `127.0.0.1:4001`, default) to watch the 3D gantry move immediately.
 
 > **Note:** Because open-source release binaries are unsigned, Windows SmartScreen may show a warning on first launch—click **More info → Run anyway**.
 
-### Option B — Build & Run from Source
+### Option 2: Build & Run from Source
 
-Requires Windows 10/11 and the [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (or Visual Studio 2022 with the **.NET desktop development** workload):
+Requires Windows 10/11 and the [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (or Visual Studio 2022 with the **.NET desktop development** workload).
+
+Build, run unit tests, and launch the simulator:
 
 ```powershell
 dotnet build Tmcm6110Simulator.sln
 dotnet test Tmcm6110Simulator.sln
 dotnet run --project src/Tmcm6110.App
-# In a second terminal, run the host tester and choose [2] (Local TCP 127.0.0.1:4001):
+```
+
+In a second terminal, run the host tester (choose `[2]` for Local TCP `127.0.0.1:4001`):
+
+```powershell
 dotnet run --project src/Tmcm6110.HostTester
 ```
 
+Run the automated protocol self-test:
+
+```powershell
+dotnet run --project src/Tmcm6110.HostTester -- --self-test
+```
+
 - **Visual Studio 2022**: Open `Tmcm6110Simulator.sln`, set `Tmcm6110.App` as the startup project, and press `F5`.
-- **Automated Protocol Self-Test**:
-  ```powershell
-  dotnet run --project src/Tmcm6110.HostTester -- --self-test
-  ```
+
+## Core Features
+
+### Communication & Protocol
+
+- Full 9-Byte Binary TMCL packet parsing/assembly with 8-bit additive checksum validation
+- Dual transport via Serial COM (`com0com` / VSPD) and zero-driver Local TCP `127.0.0.1:4001`
+- Real-time RX/TX 9-byte hex Packet Sniffer with mnemonic disassembly and high-frequency polling filter (`GAP`/`GGP`/`GIO`/`RFS STATUS`)
+- Sliding-window packet synchronization, malformed-packet detection, and configurable `ModAddr (#66)` / `HostAddr (#76)`
+- Supports both `GAP 8` polling and `Cmd 138` asynchronous position-reached events (`Status=100` ACK + unsolicited `Status=128`)
+- Retains all 6 internal axis registers (`Axis 0..5`) even when UI is configured for 1–5 active axes so multi-axis host polling never times out
+
+### Simulated Motion Control
+
+- Supports 1–6 simulated axes with absolute (`MVP ABS`), relative (`MVP REL`), and multi-axis linear interpolation (`MVP COORD`)
+- Supports reference search homing (`RFS` Mode `65`/`1`), emergency stop (`MST`), soft/virtual limit switches (`#9/#10/#11`, `#12/#13`), and alarm states
+- Supports microstep (`#140`), velocity, acceleration, and `Steps/mm` travel scaling
+- Real-time bijective swapping of physical motor channels (`Motor #0..#5`) and 3D machine roles (with automatic stroke-limit transfer) plus `Default Z-Y-X` / `Standard X-Y-Z` presets
+- Manual forced `±Limit` and StallGuard2 (`#207`) / TMC262 (`#208`) alarm injection with `CLE (Cmd 36)` recovery for testing host fault handling
+
+### 3D Visualization & Machine Configuration
+
+- Native WPF `Viewport3D` with zero third-party 3D dependencies, featuring 3D limit-switch blocks and golden Tool Center Point (TCP) trails
+- 12 built-in machine & gantry scenes filtered by active axis count (`1..6`), with mouse orbit/zoom and camera reset
+- 5 XY origin presets & 3 Z origin presets (with optional `RFS #193` direction sync), plus per-axis `-Limit / +Limit (mm)` travel bounds
+- Auto-detects Windows locale on startup with a runtime English / Traditional Chinese UI switch
+- Loads TMCL-IDE `.ini`, `.tmc`, and axis-mapping `.txt` configuration files
 
 ---
 
@@ -59,6 +102,29 @@ dotnet run --project src/Tmcm6110.HostTester
 - Watch the highlight clip (~27s, 1.6 MB): [`demo_highlight.mp4`](./demo_highlight.mp4) *(captures the classic 3-axis gantry view prior to the 1–6 axis and 12-mode upgrade)*
 
 https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
+
+## Supported Scope & Limitations
+
+This project targets the **TMCM-6110 / TMCL 9-Byte Binary** protocol, simulating the controller behavior needed for development, communication debugging, and host workflow testing.
+
+Implemented commands and key parameters include:
+
+| Category | Supported Commands / Parameters |
+| :--- | :--- |
+| **Motion** | `ROR (1)`, `ROL (2)`, `MST (3)`, `MVP (4)` (`ABS`, `REL`, `COORD` `0x40 \| mask` across active axes up to 6 axes, incl. `$47` 3-axis interpolation) |
+| **Parameters** | `SAP (5)`, `GAP (6)`, `STAP (7)`, `RSAP (8)`, `SGP (9)`, `GGP (10)`, `STGP (11)`, `RSGP (12)` |
+| **Reference Search** | `RFS (13)` (`START`, `STOP`, `STATUS`), including Mode `65` (`+Limit` homing) and Mode `1` (`-Limit` homing) |
+| **I/O & Coordinates** | `SIO (14)`, `GIO (15)`, `SCO (30)`, `GCO (31)`, `CCO (32)` |
+| **System & Events** | `CLE (36)`, `GetAppStatus (135)`, `GetFirmwareVersion (136)`, `RequestTargetPositionReachedEvent (138)` |
+| **Key Axis / Global Params** | Axis: Target/Actual Pos (`#0/#1`), Max Speed/Accel (`#4/#5`), InPos (`#8`), End Switches (`#9/#10/#11`), Limit Disable (`#12/#13`), Microstep (`#140`), RFS Mode (`#193`), SG2 Load & Alarms (`#206/#207/#208`); Global: `ModAddr (#66)`, `HostAddr (#76)` |
+
+### Limitations & Scope Boundaries
+
+- **Protocol & Logic Simulation**: Simulates TMCL protocol handling and control logic, not a physical stepper drive stage or mechanical load system.
+- **No Electrical or Safety Verification**: Does not cover electrical wiring, safety circuits (E-Stop / Safety PLC), or hardware over-current/thermal protection verification.
+- **Unimplemented Commands**: TMCL commands or advanced firmware parameters not listed above should not be assumed to behave identically to real firmware.
+- **Hardware Integration Required**: Physical TMCM-6110 boards, specific firmware revisions, and machine wiring must still be validated during hardware commissioning.
+- **Simplified Behavior Details**: Certain motion profiles and fault behaviors are simplified for development and testing and may differ in detail from physical hardware.
 
 ## 1–6 Active Axes & 12 Built-In 3D Machine Modes
 
@@ -75,7 +141,8 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
 
 > **Internal 6-Axis Register Retention**: Even when configured for 1–5 active axes in the UI, `Axis 0..5` remain active in the TMCL protocol engine so multi-axis host startup and polling never fail.
 
-## UI Workspace & Interactive Controls
+<details>
+<summary><strong>Expand Full UI Workspace & Interactive Controls Guide (Top Bar, 3D Viewport, Tab 1/2, Packet Sniffer)</strong></summary>
 
 1. **Top Connection & Motion Bar**:
    - **Serial COM Controls**: COM port selector, **`Rescan`**, baud rate (`9600`–`115200`), **`Open Serial Port`**, and live Serial / TCP listening status indicator.
@@ -95,18 +162,11 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
 5. **Bottom 9-Byte Binary Packet Sniffer**:
    - Real-time RX/TX 9-byte hex log with TMCL mnemonic disassembly, **Total RX Packets** counter, polling packet filter (`GAP`/`GGP`/`GIO`/`RFS STATUS`), **`Clear All Alarms (CLE)`**, and **`Clear Log`**.
 
-## Supported TMCL Commands & Key Parameters
+</details>
 
-| Category | Supported Commands / Parameters |
-| :--- | :--- |
-| **Motion** | `ROR (1)`, `ROL (2)`, `MST (3)`, `MVP (4)` (`ABS`, `REL`, `COORD` `0x40 \| mask` across active axes up to 6 axes, incl. `$47` 3-axis interpolation) |
-| **Parameters** | `SAP (5)`, `GAP (6)`, `STAP (7)`, `RSAP (8)`, `SGP (9)`, `GGP (10)`, `STGP (11)`, `RSGP (12)` |
-| **Reference Search** | `RFS (13)` (`START`, `STOP`, `STATUS`), including Mode `65` (`+Limit` homing) and Mode `1` (`-Limit` homing) |
-| **I/O & Coordinates** | `SIO (14)`, `GIO (15)`, `SCO (30)`, `GCO (31)`, `CCO (32)` |
-| **System & Events** | `CLE (36)`, `GetAppStatus (135)`, `GetFirmwareVersion (136)`, `RequestTargetPositionReachedEvent (138)` |
-| **Key Axis / Global Params** | Axis: Target/Actual Pos (`#0/#1`), Max Speed/Accel (`#4/#5`), InPos (`#8`), End Switches (`#9/#10/#11`), Limit Disable (`#12/#13`), Microstep (`#140`), RFS Mode (`#193`), SG2 Load & Alarms (`#206/#207/#208`); Global: `ModAddr (#66)`, `HostAddr (#76)` |
+## Connecting Your Host & Custom Configuration
 
-## Connecting Your Host Application
+### Connecting Your Host Application
 
 1. **Via Virtual Serial Port (`com0com` / VSPD)**:
    - Create a linked COM port pair (e.g., `COM10 <===> COM11`).
@@ -115,7 +175,7 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
 2. **Via Local TCP (`127.0.0.1:4001`)**:
    - Run `Tmcm6110.HostTester` (or `dotnet run --project src/Tmcm6110.HostTester`) and choose option **`[2]`** to test commands immediately without installing virtual COM drivers.
 
-## Custom Configuration Loading (`.ini` / `.tmc` / Axis Mapping `.txt`)
+### Custom Configuration Loading (`.ini` / `.tmc` / Axis Mapping `.txt`)
 
 - Open **Tab 2 (`Machine & System Settings`) → `Load .ini / .tmc`** to load TMCL-IDE Setup Wizard `.ini` exports, `.tmc` (`SAP`/`SGP`) scripts, or axis-mapping `.txt` files at runtime (startup also auto-detects matching `.ini` and axis-mapping `.txt` files in the application/parent directories).
 - Axis-mapping `.txt` files match lines containing `axis <n> (...) <LABEL>` (for example `axis 0 (1st Axis) Z`, `axis 1 (2nd Axis) Y`, `axis 2 (3rd Axis) X`) and automatically synchronize role slots for the first three axes when `Z`/`Y`/`X` labels are present.
@@ -124,18 +184,28 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
   - [`samples/demo_gantry.tmc`](./samples/demo_gantry.tmc) — Generic `SAP` / `SGP` initialization script.
 - Note: Private `.ini`, `.tmc`, and machine-specific `.txt` mapping files remain excluded in `.gitignore` (only `samples/*.ini` and `samples/*.tmc` are tracked) so production parameters stay local.
 
-## Decoupled Architecture & Project Layout
+## Project Architecture & Workflow
 
-- **`src/Tmcm6110.Core`**: Hardware-agnostic motion and protocol simulation engine:
-  - `Abstractions/`: `IMotionController`, `IMotionAxis`, `IProtocolAdapter`, `MotionAxisTelemetry`, `ProtocolTraceEvent`
-  - `Protocol/`: `TmclProtocolAdapter` (9-byte binary parser/dispatcher), `TmclPacket`, `TmclDefinitions`
-  - `Transport/`: `ByteStreamTransportServer` (Serial COM + TCP multiplexer) & `TmclSerialServer` facade
-  - `Engine/` & `Config/`: `Tmcm6110Controller`, `AxisState`, `AxisRoleMap` (bijective channel/role mapper), `TmcmConfigLoader`
-- **`src/Tmcm6110.App`**: Native WPF application cleanly separated from core protocol logic:
-  - `Rendering/`: `IMachine3DScene`, `SceneDescriptor`, `Axis3DFrame`, `Mesh3DPrimitives`, `Gantry3DSceneBuilder` (scene host/registry), plus all 12 modular scene classes under `Rendering/Scenes/`
-  - `ViewModels/` & `Resources/`: `MainViewModel`, `AxisViewModel`, `Strings.en-US.xaml`, `Strings.zh-TW.xaml`
-- **`src/Tmcm6110.HostTester`**: Console host client & automated protocol self-test (`--self-test`).
-- **`tests/Tmcm6110.Core.Tests`**: xUnit test suite (`TmclPacketTests`, `Tmcm6110ControllerTests`, `TmcmConfigLoaderTests`, `AxisLimitsAndAlarmsTests`, `AxisRoleMapTests`, `ProtocolDecouplingTests`).
+```text
+src/
+├── Tmcm6110.Core/
+│   ├── Abstractions/       IMotionController, IMotionAxis, IProtocolAdapter, Telemetry
+│   ├── Protocol/           TmclProtocolAdapter, TmclPacket, TmclDefinitions
+│   ├── Transport/          ByteStreamTransportServer (TCP / Serial COM), TmclSerialServer
+│   ├── Engine/             Tmcm6110Controller, AxisState, AxisRoleMap
+│   └── Config/             TmcmConfigLoader (.ini / .tmc / axis-map .txt)
+├── Tmcm6110.App/
+│   ├── ViewModels/         MainViewModel, AxisViewModel
+│   ├── Rendering/          IMachine3DScene, Gantry3DSceneBuilder & Scenes/ (12 scenes)
+│   └── Resources/          Strings.en-US.xaml, Strings.zh-TW.xaml & Localization/
+└── Tmcm6110.HostTester/    Console host client & automated protocol self-test (--self-test)
+
+samples/                    Public sample presets (demo_gantry.ini, demo_gantry.tmc)
+tests/
+└── Tmcm6110.Core.Tests/    xUnit tests (packet, controller, limits/alarms, role map, config, decoupling)
+```
+
+`ByteStreamTransportServer` exchanges raw byte streams over TCP or Serial COM, while `TmclProtocolAdapter` parses and dispatches 9-byte binary TMCL frames to `Tmcm6110Controller` to update motion state. The WPF ViewModels read live position, speed, limit, and alarm telemetry from the controller and drive `IMachine3DScene` to render the active 3D scene.
 
 ## Custom Development & Commercial Inquiries
 
