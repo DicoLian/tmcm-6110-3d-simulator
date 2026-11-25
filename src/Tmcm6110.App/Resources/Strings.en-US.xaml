@@ -82,7 +82,7 @@
     <sys:String x:Key="SnifferTitle">9-Byte Binary Packet Sniffer &amp; Disassembler</sys:String>
     <sys:String x:Key="LblTotalRxPackets">Total RX Packets: </sys:String>
     <sys:String x:Key="ChkHidePolling">Hide High-Rate Polling Packets (GAP / GGP / GIO / RFS STATUS)</sys:String>
-    <sys:String x:Key="BtnClearAllAlarms">Clear All Alarms (CLE)</sys:String>
+    <sys:String x:Key="BtnClearAllAlarms">Clear All Alarms</sys:String>
     <sys:String x:Key="BtnClearLogs">Clear Log</sys:String>
 
     <sys:String x:Key="ColTimestamp">Time</sys:String>

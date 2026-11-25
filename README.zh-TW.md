@@ -6,8 +6,11 @@
 ![WPF 3D](https://img.shields.io/badge/UI-WPF%20Native%203D-0078D4?logo=windows)
 ![3D Modes](https://img.shields.io/badge/3D%20Modes-1--6%20Axes%20%7C%2012%20Scenes-1976D2)
 ![Protocol](https://img.shields.io/badge/Protocol-TMCL%209--Byte%20Binary-00A86B)
+![Firmware Spec](https://img.shields.io/badge/Firmware%20Spec-TMCM--6110%20FW%20V1.47%20(Rev%201.23)-FF6F00)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Build & Release](https://github.com/DicoLian/tmcm-6110-3d-simulator/actions/workflows/release.yml/badge.svg)](https://github.com/DicoLian/tmcm-6110-3d-simulator/actions/workflows/release.yml)
+
+> **韌體規格說明：** 本模擬器目前已全面改為採用 **[`TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf`](./TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf)** 內容（TMCM-6110 TMCL Firmware V1.47 / Rev 1.23，`Cmd 136` 回傳 `6110V147` / `0x17DE012F`）。原附之 [`TMCL_reference.pdf`](./TMCL_reference.pdf)（V2.22 舊版通用手冊）僅保留作為歷史規格對照參考。
 
 ![TMCM-6110 3D Simulator Demo](./demo.gif)
 
@@ -23,10 +26,10 @@
 
 讓開發者在沒有實體控制卡或機台尚未組裝完成前，就能預先驗證與除錯：
 
-- 9-Byte Binary TMCL 封包格式與 8-bit 累加 Checksum（依循 [`TMCL_reference.pdf`](./TMCL_reference.pdf)）
-- `SAP`、`GAP`、`MVP`、`RFS` 等常用指令流程與參數讀寫
-- TCP／Serial COM 主從通訊、`GAP 8` 狀態輪詢與 `Cmd 138` 非同步到位推播
-- 1～6 軸協同移動、極限開關、StallGuard2／TMC262 Alarm 與回原點流程
+- 9-Byte Binary TMCL 封包格式與 8-bit 累加 Checksum 驗證（嚴格依循 [`TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf`](./TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf)，版本 `6110V147`）
+- `SAP`、`GAP`、`MVP`、`RFS`、`SCO`/`GCO`/`CCO`/`ACO`、`SIO`/`GIO`、`Cmd 138`、`Cmd 255` 等指令流程與嚴格參數範圍／唯讀檢查
+- TCP／Serial COM 主從通訊、`GAP 8` 輪詢、`#87` 次要串列位址、`#255` 關閉主動回覆，以及先布防 `Cmd 138` 的非同步到位推播
+- 1～6 軸運動控制（32-bit 位置、單次最多 3 軸 `Bit 6` 線性插補）、極限與原點開關、StallGuard2（`#207` 讀取自動清除）／TMC262（`#208`）異常與 `RFS`（Mode `1..8`、`+64`、`+128`）回原點流程
 - 自有上位機介面、運動控制邏輯或自動化測試腳本
 - TMCL-IDE `.ini`／`.tmc` 參數載入與實體通道／3D 軸向角色對映
 
@@ -73,19 +76,20 @@ dotnet run --project src/Tmcm6110.HostTester -- --self-test
 ### 通訊與協定
 
 - 完整解析與組裝 9-Byte Binary TMCL 封包，支援 8-bit 累加 Checksum 驗證
-- 支援 Serial COM（`com0com`／VSPD）與免驅動本機 TCP `127.0.0.1:4001` 雙傳輸通道
+- 支援 Serial COM（`com0com`／VSPD，鮑率支援至 `230400`）與免驅動本機 TCP `127.0.0.1:4001` 雙傳輸通道
 - 即時 RX／TX 9-Byte Hex 封包監控、TMCL 指令反組譯與高頻輪詢過濾（`GAP`/`GGP`/`GIO`/`RFS STATUS`）
-- 支援滑動視窗封包同步、異常封包偵測與可調式 `ModAddr (#66)`／`HostAddr (#76)` 位址
-- 支援 `GAP 8` 輪詢與 `Cmd 138` 非同步到位推播（即時回覆 `Status=100` + 到位主動推播 `Status=128`）
+- 支援滑動視窗封包同步、異常封包偵測、可調式 `ModAddr (#66)`／`HostAddr (#76)` 位址、次要位址 `#87` 與抑制回覆 `#255`
+- 支援 `GAP 8` 輪詢與 FW V1.47 **運動前預先布防** `Cmd 138` 非同步到位推播（`Type=0` 單次／`Type=1` 連續；即時回覆 `Status=100` + 到位主動推播 `Status=128`）
 - 無論畫面設定為幾軸，底層始終保留完整 6 軸暫存器（`Axis 0..5`），確保上位機全軸輪詢絕不 Timeout
 
 ### 模擬運動控制
 
-- 支援 1～6 個模擬軸，涵蓋絕對（`MVP ABS`）、相對（`MVP REL`）與多軸線性插補（`MVP COORD`）移動
-- 支援回原點搜尋（`RFS` Mode `65`/`1`）、急停（`MST`）、軟硬體限位（`#9/#10/#11`、`#12/#13`）與 Alarm 狀態
-- 支援微步（`#140`）、速度、加速度與 `Steps/mm` 行程換算
+- 完整支援 **32-bit** 有號位置（`-2,147,483,648 .. 2,147,483,647`）、有號 `ROR`/`ROL`（`-2047..2047`），以及 **Soft Stop 緩減速停止** `MST`（依 `#5` 加速度線性減速至零）
+- 支援 1～6 個模擬軸，涵蓋絕對（`MVP ABS`）、相對（`MVP REL`）與協同座標移動（`MVP COORD`：`Bit 6 / 0x40` 單次最多 3 軸同步速度與加速度插補；`Bit 7 / 0x80` 不限軸數非插補啟動；`3D 插補展示` 會自動將超過 3 軸拆分為多組 `<=3` 軸群組）
+- 支援 FW V1.47 原點搜尋（`RFS` Mode `1..8`、`+64`、`+128`，含 `#194/#195` `0..2047` 速度與 `#196/#197` 校準回讀）、軟硬體限位（`#9/#10/#11`、`#12/#13`、`#149` 限位緩停旗標）與 Alarm 狀態
+- 支援微步（`#140` `0..8`）、電流（`#6/#7` `0..255`）、即時加速度（`#135`）、SmartEnergy 實際電流（`#180`）、速度、加速度與 `Steps/mm` 行程換算
 - 支援實體馬達通道（`Motor #0..#5`）與 3D 軸向角色即時 1-對-1 對調（自動搬移行程範圍），並提供 `預設 Z-Y-X` / `標準 X-Y-Z` 快速預設
-- 支援手動強制注入 `±Limit` 與 StallGuard2（`#207`）／TMC262（`#208`）Alarm，並透過 `CLE (Cmd 36)` 復歸測試上位機容錯處理
+- 支援手動強制注入 `±Limit` 與 StallGuard2（`#207` 讀取或移動時自動清除）／致命 TMC262（`#208`）Alarm（`CLE` 僅清除獨立錯誤旗標 `0..5`，致命驅動停機需透過清除故障或 `Cmd 255` 軟體重置復歸）
 
 ### 3D 檢視與機台設定
 
@@ -105,18 +109,20 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
 
 ## 支援範圍與限制
 
-本專案以 **TMCM-6110／TMCL 9-Byte Binary 協定**為目標，模擬開發、通訊除錯及上位機流程所需的控制器行為。
+本專案目前採用 **[`TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf`](./TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf)**（Firmware **V1.47 / Rev 1.23**）作為 **TMCM-6110／TMCL 9-Byte Binary 協定**規格基準，模擬開發、通訊除錯及上位機流程所需的控制器行為。
 
-目前已實作常用指令與關鍵參數如下：
+目前已實作指令與關鍵參數如下：
 
-| 類別 | 支援指令與參數功能 |
+| 類別 | 支援指令與參數功能（FW V1.47） |
 | :--- | :--- |
-| **運動控制** | `ROR (1)`、`ROL (2)`、`MST (3)`、`MVP (4)`（支援 `ABS`、`REL`、`COORD` `0x40 \| mask` 最多 6 軸同動插補，含 `$47` 三軸線性插補） |
-| **參數存取** | `SAP (5)`、`GAP (6)`、`STAP (7)`、`RSAP (8)`、`SGP (9)`、`GGP (10)`、`STGP (11)`、`RSGP (12)` |
-| **原點搜尋** | `RFS (13)`（`START` / `STOP` / `STATUS`，支援 Mode `65` 往 `+Limit` 與 Mode `1` 往 `-Limit` 搜尋原點） |
-| **I/O 與座標** | `SIO (14)`、`GIO (15)`、`SCO (30)`、`GCO (31)`、`CCO (32)` |
-| **系統與事件** | `CLE (36)`、`GetAppStatus (135)`、`GetFirmwareVersion (136)`、`RequestTargetPositionReachedEvent (138)` |
-| **常用軸 / 全域參數** | Axis：目標/實際位置 (`#0/#1`)、最高速度/加減速 (`#4/#5`)、到位旗標 (`#8`)、極限開關 (`#9/#10/#11`)、極限停機停用 (`#12/#13`)、微步 (`#140`)、RFS 模式 (`#193`)、SG2 負載與異常 (`#206/#207/#208`)；Global：`ModAddr (#66)`、`HostAddr (#76)` |
+| **運動控制** | 有號 `ROR (1)`／`ROL (2)`（`-2047..2047`）、緩減速停止 `MST (3)`、32-bit `MVP (4)`（`ABS`、`REL`、`COORD` `0x40\|mask` 單次最多 **3 軸**線性插補、`0x80\|mask` 不限軸數同動啟動） |
+| **參數存取** | 嚴格驗證 `SAP (5)`、`GAP (6)`、`STAP (7)`、`RSAP (8)`、`SGP (9)`、`GGP (10)`、`STGP (11)`、`RSGP (12)`（已移除 `SAC 29`；嚴格區分 Bank 0/2/3） |
+| **原點搜尋** | `RFS (13)`（`START` / `STOP` / `STATUS`），支援 Mode `1..8`、`+64`、`+128`，`#194/#195`（`0..2047`）、`#196` EndSwitchDistance、`#197` LastReferencePosition |
+| **I/O 與座標** | `SIO (14)`／`GIO (15)`（`0..7` DI/DO、12-bit `AIN0(0)`/`AIN4(4)`、`Port 8` 供電電壓 `240`=24.0V、`SIO 0,0,0..3` 上拉電阻）；座標 `0..20`（`SCO 30`、`GCO 31`、`CCO 32`、`ACO 39`、`255` 批次複製、`#84`） |
+| **系統與事件** | `CLE (36)`（獨立錯誤旗標 `0..5`）、`Cmd 128..133` 程式狀態、`GetAppStatus (135)`（`Type 0..3`）、`GetFirmwareVersion (136)`（`"6110V147"`／`0x17DE012F`）、`RestoreFactorySettings (137)`（`1234` 無回覆）、預先布防 `RequestTargetPositionReachedEvent (138)`（`Type 0/1`）、`SoftwareReset (255)`（`1234`） |
+| **常用軸 / 全域參數** | Axis（Table 16）：32-bit 位置 (`#0/#1`)、速度/加減速 (`#2/#3/#4/#5/#135`)、電流 (`#6/#7` `0..255`)、到位 (`#8`)、原點/極限開關 (`#9/#10/#11`, `#12/#13`)、微步 (`#140` `0..8`)、限位緩停 (`#149`)、CoolStep/SG2 (`#180/#181/#206`)、讀取自動清除 `#207`、TMC262 `#208`；Global：鮑率 `#65`、`ModAddr #66`、`HostAddr #76`、次要位址 `#87`、亂數 `#133`、關閉回覆 `#255`、Bank 2 (`0..255`)、Bank 3 (`0..2`, `27..46`) |
+
+> **相容性提醒（對比舊版 `TMCL_reference.pdf` V2.22）：** 若現有上位機依舊版通用手冊撰寫，改為 FW V1.47 模式後需注意：`Cmd 138` 須於 `MVP` **之前**布防、`MST` 為緩減速停止、`MVP COORD Bit 6` 上限為 3 軸、`Cmd 136` 回傳 `6110V147` / `0x17DE012F`、`#207` 讀取即自動清除、`CLE` 不清除 TMC262 致命保護、座標擴大至 `0..20`，且已移除 `SAC (29)` 與舊版參數（`#64`、`#73`、`#141/#142/#147/#151/#205/#209..#212`）。
 
 ### 使用限制與注意事項
 
@@ -145,8 +151,8 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
 <summary><strong>展開完整操作介面與互動控制說明（頂部連線列、3D 視窗、Tab 1/2、封包監控）</strong></summary>
 
 1. **頂部連線與全局快捷列**：
-   - **Serial COM 連線區**：COM Port 選擇、**`重新掃描`**、鮑率（`9600`～`115200`）、**`開啟 Serial Port 監聽`** 與即時 Serial / TCP 狀態指示燈。
-   - **快捷全域動作**：**`3D 插補展示 (MVP COORD)`**（依當前啟用軸數執行多軸插補巡航）、**`全軸原點復歸 (RFS)`**、**`全軸急停 (MST)`**。
+   - **Serial COM 連線區**：COM Port 選擇、**`重新掃描`**、鮑率（`9600`～`230400`）、**`開啟 Serial Port 監聽`** 與即時 Serial / TCP 狀態指示燈。
+   - **快捷全域動作**：**`3D 插補展示 (MVP COORD)`**（先布防 `Cmd 138` 並分組執行 `<=3` 軸 `MVP COORD` 巡航）、**`全軸原點復歸 (RFS)`**、**`全軸停止 (MST)`**。
 2. **左側 3D 機台視窗 (`Viewport3D`)**：
    - 支援滑鼠**左/右鍵拖曳旋轉視角**、**滾輪縮放**，並提供 **`清除 3D 軌跡`** 與 **`重置 3D 視角`** 按鈕。
    - 左上角圖例與左下角即時座標列會依當前選用的 3D 機台模式與馬達通道映射自動切換格式。
@@ -160,7 +166,7 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
    - **TMCL 節點位址與傳輸資訊**：調整 **`ModAddr(#66)`** 與 **`HostAddr(#76)`**，檢視本機 TCP `127.0.0.1:4001` 監聽狀態。
    - **設定檔載入與介面語系**：**`載入設定 (.ini / .tmc)`** 按鈕、已載入設定摘要與 **`🌐 EN / 繁中`** 即時語系切換。
 5. **底部 9-Byte Binary 封包監控與即時反組譯**：
-   - 即時呈現 RX/TX 9-Byte Hex 封包與 TMCL 指令反組譯、**累計接收封包數**、高頻輪詢過濾勾選（`GAP`/`GGP`/`GIO`/`RFS STATUS`）、**`清除全部 Alarm (CLE)`** 與 **`清空封包紀錄`**。
+   - 即時呈現 RX/TX 9-Byte Hex 封包與 TMCL 指令反組譯、**累計接收封包數**、高頻輪詢過濾勾選（`GAP`/`GGP`/`GIO`/`RFS STATUS`）、**`清除全部 Alarm`** 與 **`清空封包紀錄`**。
 
 </details>
 
@@ -220,5 +226,5 @@ tests/
 ## 授權條款與第三方聲明
 
 - 本模擬器原始碼採用 [MIT License](./LICENSE) 授權。
-- [`TMCL_reference.pdf`](./TMCL_reference.pdf) 版權歸屬 **Analog Devices / Trinamic**，僅作為通訊協定參考文件隨附於本專案中。
+- [`TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf`](./TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf) 與 [`TMCL_reference.pdf`](./TMCL_reference.pdf) 版權歸屬 **Analog Devices / Trinamic**，僅作為通訊協定參考文件隨附於本專案中。
 - **免責聲明**：本專案為獨立開發的**非官方開源模擬器**，與 **Analog Devices, Inc.** 或 **Trinamic** 無任何隸屬、背書或贊助關係。`TMCM-6110`、`TMCL`、`StallGuard2`、`TMC262` 等名稱與商標均歸屬其各自權利人所有。

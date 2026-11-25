@@ -43,7 +43,15 @@ public class Tmcm6110ControllerTests
         Assert.Equal(TmclStatus.SuccessOk, ggpBank2.StatusEnum);
         Assert.Equal(-4200, ggpBank2.Value);
 
-        var invalidBank = controller.ProcessCommand(Cmd(TmclCommand.GGP, 10, 3, 0));
+        // Bank 3 interrupt parameters: #0..#2 (any int), #27..#46 (0..3)
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SGP, 0, 3, 123)).StatusEnum);
+        Assert.Equal(123, controller.ProcessCommand(Cmd(TmclCommand.GGP, 0, 3, 0)).Value);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SGP, 27, 3, 2)).StatusEnum);
+        Assert.Equal(2, controller.ProcessCommand(Cmd(TmclCommand.GGP, 27, 3, 0)).Value);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SGP, 27, 3, 4)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GGP, 10, 3, 0)).StatusEnum);
+
+        var invalidBank = controller.ProcessCommand(Cmd(TmclCommand.GGP, 10, 4, 0));
         Assert.Equal(TmclStatus.InvalidValue, invalidBank.StatusEnum);
     }
 
@@ -52,25 +60,35 @@ public class Tmcm6110ControllerTests
     {
         var controller = new Tmcm6110Controller();
 
-        // Cmd 135: GetAppStatus reflects Global Parameter (0, 128)
-        controller.ProcessCommand(Cmd(TmclCommand.SGP, 128, 0, 1));
+        // Global Param (0, 128) is read-only under FW V1.47
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.SGP, 128, 0, 1)).StatusEnum);
+
+        // Cmd 129 RunApplication sets status=1 & PC=val, Cmd 135 queries Types 0..3
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.RunApplication, 1, 0, 42)).StatusEnum);
         var appStatus = controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 0, 0, 0));
         Assert.Equal(TmclStatus.SuccessOk, appStatus.StatusEnum);
         Assert.Equal((byte)TmclCommand.GetAppStatus, appStatus.Command);
         Assert.Equal(1, appStatus.Value);
 
-        // Cmd 136 Type 0: ASCII string format [HostAddr] + "0610V631"
+        var appPc = controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 1, 0, 0));
+        Assert.Equal(42, appPc.Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 2, 0, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 3, 0, 0)).Value);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 4, 0, 0)).StatusEnum);
+
+        // Cmd 136 Type 0: ASCII string format [HostAddr] + "6110V147"
         var fwAscii = controller.ProcessCommand(Cmd(TmclCommand.GetFirmwareVersion, 0, 0, 0));
         byte[] asciiBytes = fwAscii.ToBytes();
         Assert.Equal(9, asciiBytes.Length);
         Assert.Equal(controller.HostAddress, asciiBytes[0]);
-        Assert.Equal("0610V631", Encoding.ASCII.GetString(asciiBytes, 1, 8));
+        Assert.Equal("6110V147", Encoding.ASCII.GetString(asciiBytes, 1, 8));
 
-        // Cmd 136 Type 1: Binary format 0x06100631
+        // Cmd 136 Type 1: Binary format 0x17DE012F (Module 6110, FW V1.47)
         var fwBin = controller.ProcessCommand(Cmd(TmclCommand.GetFirmwareVersion, 1, 0, 0));
         Assert.Equal(TmclStatus.SuccessOk, fwBin.StatusEnum);
         Assert.Equal((byte)TmclCommand.GetFirmwareVersion, fwBin.Command);
-        Assert.Equal(0x06100631, fwBin.Value);
+        Assert.Equal(0x17DE012F, fwBin.Value);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GetFirmwareVersion, 2, 0, 0)).StatusEnum);
     }
 
     [Fact]
@@ -115,16 +133,21 @@ public class Tmcm6110ControllerTests
         Assert.True(posAfterRor > 0);
         Assert.True(spdAfterRor > 0);
 
-        // Stop Motor
+        // FW 1.47 MST: Soft stop (ramping down cleanly using MaxAcceleration, TargetSpeed=0)
         var mstReply = controller.ProcessCommand(Cmd(TmclCommand.MST, 0, 1, 0));
         Assert.Equal(TmclStatus.SuccessOk, mstReply.StatusEnum);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetSpeed, 1, 0)).Value);
+
+        // Allow soft deceleration ramp to bring axis smoothly to a halt
+        for (int i = 0; i < 60; i++)
+            controller.StepSimulation(0.01);
         Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 1, 0)).Value);
 
         int stoppedPos = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 1, 0)).Value;
         controller.StepSimulation(0.05);
         Assert.Equal(stoppedPos, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 1, 0)).Value);
 
-        // Rotate Left (negative direction)
+        // Rotate Left (negative direction) + signed ROR/ROL validation (-2047..2047)
         var rolReply = controller.ProcessCommand(Cmd(TmclCommand.ROL, 0, 1, 600));
         Assert.Equal(TmclStatus.SuccessOk, rolReply.StatusEnum);
 
@@ -135,6 +158,13 @@ public class Tmcm6110ControllerTests
         int spdAfterRol = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 1, 0)).Value;
         Assert.True(posAfterRol < stoppedPos);
         Assert.True(spdAfterRol < 0);
+
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.ROR, 0, 1, 2048)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.ROL, 0, 1, -2048)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.ROR, 0, 1, -400)).StatusEnum);
+        Assert.Equal(-400, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetSpeed, 1, 0)).Value);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.ROL, 0, 1, -400)).StatusEnum);
+        Assert.Equal(400, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetSpeed, 1, 0)).Value);
     }
 
     [Fact]
@@ -175,29 +205,31 @@ public class Tmcm6110ControllerTests
     }
 
     [Fact]
-    public void Cmd138_ReturnsImmediateStatus100Ack_AndPushesStatus128OnArrival()
+    public void Cmd138_PreArmedOneShotAndContinuous_ReturnsAckAndPushesStatus128OnArrival()
     {
         var controller = new Tmcm6110Controller();
         var asyncReplies = new List<TmclReplyPacket>();
         controller.AsyncEventReplyGenerated += pkt => asyncReplies.Add(pkt);
 
-        // Start motion on Axis 0 and Axis 2 (bitmask 0b000101 = 0x05)
-        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 0, 800));
-        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, 1600));
+        // Type=2 is invalid under FW 1.47
+        Assert.Equal(TmclStatus.WrongType,
+            controller.ProcessCommand(Cmd(TmclCommand.RequestTargetPositionReachedEvent, 2, 0, 0x01)).StatusEnum);
 
+        // 1. Type 0 (one-shot): Must be armed BEFORE the single MVP COORD/ABS command
         const int axisMask = (1 << 0) | (1 << 2);
         var ack = controller.ProcessCommand(Cmd(TmclCommand.RequestTargetPositionReachedEvent, 0, 0, axisMask));
-
         Assert.Equal(TmclStatus.SuccessOk, ack.StatusEnum);
         Assert.Equal((byte)TmclCommand.RequestTargetPositionReachedEvent, ack.Command);
         Assert.Equal(axisMask, ack.Value);
+
+        controller.ProcessCommand(Cmd(TmclCommand.SCO, 1, 0, 800));
+        controller.ProcessCommand(Cmd(TmclCommand.SCO, 1, 2, 1600));
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 2, (byte)(0x40 | axisMask), 1));
         Assert.Empty(asyncReplies);
 
-        // Step once: axes are still moving, so no Status=128 event yet
         controller.StepSimulation(0.01);
         Assert.Empty(asyncReplies);
 
-        // Step until both axes arrive
         for (int i = 0; i < 300; i++)
             controller.StepSimulation(0.01);
 
@@ -210,8 +242,205 @@ public class Tmcm6110ControllerTests
         Assert.Equal(controller.HostAddress, asyncEvent.ReplyAddress);
         Assert.Equal(controller.ModuleAddress, asyncEvent.ModuleAddress);
 
-        // Subsequent simulation steps must not re-fire the one-shot event
-        controller.StepSimulation(0.05);
+        // Subsequent MVP without re-arming must NOT re-fire Type=0
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 0, 0));
+        for (int i = 0; i < 200; i++)
+            controller.StepSimulation(0.01);
         Assert.Single(asyncReplies);
+
+        // 2. Type 1 (continuous): Stays armed across multiple separate MVPs until disarmed
+        asyncReplies.Clear();
+        Assert.Equal(TmclStatus.SuccessOk,
+            controller.ProcessCommand(Cmd(TmclCommand.RequestTargetPositionReachedEvent, 1, 0, axisMask)).StatusEnum);
+
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 0, 500));
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, 1200));
+
+        int accumMask = 0;
+        for (int i = 0; i < 300 && accumMask != axisMask; i++)
+        {
+            controller.StepSimulation(0.01);
+            foreach (var r in asyncReplies)
+                accumMask |= r.Value;
+        }
+        Assert.Equal(axisMask, accumMask);
+
+        // Disarm with Value=0, Type=0 -> next MVP does not fire
+        int countBeforeDisarm = asyncReplies.Count;
+        Assert.Equal(TmclStatus.SuccessOk,
+            controller.ProcessCommand(Cmd(TmclCommand.RequestTargetPositionReachedEvent, 0, 0, 0)).StatusEnum);
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 0, 100));
+        for (int i = 0; i < 150; i++)
+            controller.StepSimulation(0.01);
+        Assert.Equal(countBeforeDisarm, asyncReplies.Count);
+    }
+
+    [Fact]
+    public void Position32Bit_SupportsFullSignedInt32Range()
+    {
+        var controller = new Tmcm6110Controller();
+        controller.GetAxis(3).SetVirtualStrokeLimits(-20_000_000, 20_000_000);
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MaxPositioningSpeed, 3, 2000));
+
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 3, 10_000_000)).StatusEnum);
+        Assert.Equal(10_000_000, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosition, 3, 0)).Value);
+
+        for (int i = 0; i < 4500; i++)
+        {
+            controller.StepSimulation(0.1);
+            if (controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, 3, 0)).Value == 1)
+                break;
+        }
+        Assert.Equal(10_000_000, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 3, 0)).Value);
+
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 3, -10_000_000)).StatusEnum);
+        for (int i = 0; i < 9000; i++)
+        {
+            controller.StepSimulation(0.1);
+            if (controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, 3, 0)).Value == 1)
+                break;
+        }
+        Assert.Equal(-10_000_000, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 3, 0)).Value);
+    }
+
+    [Fact]
+    public void AxisParameterValidation_EnforcesFw147RangesAndReadOnlyRules()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // #6/#7 Current 0..255
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.AbsoluteMaxCurrent, 0, 255)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.AbsoluteMaxCurrent, 0, 256)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.StandbyCurrent, 0, 256)).StatusEnum);
+
+        // #4/#5/#130 >= 1
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MaxPositioningSpeed, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MaxAcceleration, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MinimumSpeed, 0, 0)).StatusEnum);
+
+        // #140 Microstep resolution 0..8
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MicrostepResolution, 0, 8)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MicrostepResolution, 0, 9)).StatusEnum);
+
+        // #180 SmartEnergyActualCurrent read-only; removed params -> WrongType; SAC (29) -> InvalidCommand
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.SmartEnergyActualCurrent, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.SmartEnergyActualCurrent, 0, 10)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GAP, 142, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GAP, 147, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GAP, 205, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GAP, 209, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidCommand, controller.ProcessCommand(new TmclCommandPacket(1, 29, 0, 0, 0)).StatusEnum);
+    }
+
+    [Fact]
+    public void Coordinates0To20_ScoGcoCcoAcoBatch255AndSgp84_FollowFw147()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // Range 0..20 valid; 21 invalid
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SCO, 0, 0, 1111)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SCO, 20, 0, 2222)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SCO, 21, 0, 3333)).StatusEnum);
+        Assert.Equal(1111, controller.ProcessCommand(Cmd(TmclCommand.GCO, 0, 0, 0)).Value);
+        Assert.Equal(2222, controller.ProcessCommand(Cmd(TmclCommand.GCO, 20, 0, 0)).Value);
+
+        // Batch copy SCO 5, 255 -> EEPROM, overwrite RAM, then GCO 5, 255 -> RAM
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SCO, 5, 1, 5555)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SCO, 5, 255, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SCO, 5, 1, 9999)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.GCO, 5, 255, 0)).StatusEnum);
+        Assert.Equal(5555, controller.ProcessCommand(Cmd(TmclCommand.GCO, 5, 1, 0)).Value);
+
+        // CCO captures ActualPosition and ACO copies Accumulator into coordinate
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 0, 450));
+        for (int i = 0; i < 150; i++)
+            controller.StepSimulation(0.01);
+        Assert.Equal(450, controller.ProcessCommand(Cmd(TmclCommand.CCO, 3, 0, 0)).Value);
+        Assert.Equal(450, controller.ProcessCommand(Cmd(TmclCommand.GCO, 3, 0, 0)).Value);
+
+        controller.ProcessCommand(Cmd(TmclCommand.CALC, 9, 0, 777)); // Type 9 = LOAD 777 into Accumulator
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.ACO, 4, 0, 0)).StatusEnum);
+        Assert.Equal(777, controller.ProcessCommand(Cmd(TmclCommand.GCO, 4, 0, 0)).Value);
+
+        // SGP 84 = 1 persists 1..20 on write while coord 0 stays RAM-only across SoftwareReset
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SGP, 84, 0, 1)).StatusEnum);
+        controller.ProcessCommand(Cmd(TmclCommand.SCO, 0, 2, 123));
+        controller.ProcessCommand(Cmd(TmclCommand.SCO, 6, 2, 456));
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SoftwareReset, 0, 0, 1234)).StatusEnum);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GCO, 0, 2, 0)).Value);
+        Assert.Equal(456, controller.ProcessCommand(Cmd(TmclCommand.GCO, 6, 2, 0)).Value);
+    }
+
+    [Fact]
+    public void SioAndGio_FollowFw147DigitalAndAnalogPorts()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // Digital outputs (Bank 2, ports 0..7 + 255 bitmask)
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SIO, 0, 2, 1)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SIO, 7, 2, 1)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.SIO, 8, 2, 1)).StatusEnum);
+        Assert.Equal(0x81, controller.ProcessCommand(Cmd(TmclCommand.GIO, 255, 2, 0)).Value);
+
+        // Digital inputs (Bank 0, ports 0..7 + 255 bitmask)
+        controller.SetDigitalInput(2, true);
+        controller.SetDigitalInput(6, true);
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GIO, 6, 0, 0)).Value);
+        Assert.Equal(0x44, controller.ProcessCommand(Cmd(TmclCommand.GIO, 255, 0, 0)).Value);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GIO, 8, 0, 0)).StatusEnum);
+
+        // Pull-up config SIO 0, 0, 0..3
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SIO, 0, 0, 2)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SIO, 0, 0, 4)).StatusEnum);
+
+        // Analog inputs Bank 1: AIN0(0) & AIN4(4) 12-bit 0..4095, Port 8 supply voltage
+        controller.SetAnalogInput(0, 3500);
+        controller.SetAnalogInput(4, 1234);
+        Assert.Equal(3500, controller.ProcessCommand(Cmd(TmclCommand.GIO, 0, 1, 0)).Value);
+        Assert.Equal(1234, controller.ProcessCommand(Cmd(TmclCommand.GIO, 4, 1, 0)).Value);
+        Assert.Equal(240, controller.ProcessCommand(Cmd(TmclCommand.GIO, 8, 1, 0)).Value);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GIO, 1, 1, 0)).StatusEnum);
+    }
+
+    [Fact]
+    public void GlobalParams_Random133_UserVarEeprom_Cmd137AndCmd255_FollowFw147()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // Obsolete globals #64 and #73 -> WrongType; End switch polarity #79 accepts 0..3
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GGP, 64, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.GGP, 73, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SGP, 79, 0, 3)).StatusEnum);
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.SGP, 79, 0, 4)).StatusEnum);
+
+        // PRNG #133 deterministic given same seed
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SGP, 133, 0, 42)).StatusEnum);
+        int rnd1 = controller.ProcessCommand(Cmd(TmclCommand.GGP, 133, 0, 0)).Value;
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SGP, 133, 0, 42)).StatusEnum);
+        int rnd2 = controller.ProcessCommand(Cmd(TmclCommand.GGP, 133, 0, 0)).Value;
+        Assert.True(rnd1 >= 0);
+        Assert.Equal(rnd1, rnd2);
+
+        // User variables STGP/RSGP Bank 2 only; persist across Cmd 255 when #85=0, clear when #85=1
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.STGP, 75, 0, 0)).StatusEnum);
+        controller.ProcessCommand(Cmd(TmclCommand.SGP, 12, 2, 8888));
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.STGP, 12, 2, 0)).StatusEnum);
+        controller.ProcessCommand(Cmd(TmclCommand.SGP, 12, 2, 1111));
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.RSGP, 12, 2, 0)).StatusEnum);
+        Assert.Equal(8888, controller.ProcessCommand(Cmd(TmclCommand.GGP, 12, 2, 0)).Value);
+
+        controller.ProcessCommand(Cmd(TmclCommand.SGP, 12, 2, 1111));
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SoftwareReset, 0, 0, 1234)).StatusEnum);
+        Assert.Equal(8888, controller.ProcessCommand(Cmd(TmclCommand.GGP, 12, 2, 0)).Value);
+
+        controller.ProcessCommand(Cmd(TmclCommand.SGP, 85, 0, 1));
+        controller.ProcessCommand(Cmd(TmclCommand.SoftwareReset, 0, 0, 1234));
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 12, 2, 0)).Value);
+
+        // Cmd 137 RestoreFactorySettings resets custom params to defaults when value==1234
+        Assert.Equal(TmclStatus.InvalidValue, controller.ProcessCommand(Cmd(TmclCommand.RestoreFactorySettings, 0, 0, 1)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.RestoreFactorySettings, 0, 0, 1234)).StatusEnum);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 85, 0, 0)).Value);
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GGP, 79, 0, 0)).Value);
     }
 }

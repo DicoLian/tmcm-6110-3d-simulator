@@ -42,7 +42,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<SelectableOption<XyOriginPreset>> AvailableXyOrigins { get; } = new();
     public ObservableCollection<SelectableOption<ZOriginPreset>> AvailableZOrigins { get; } = new();
     public ObservableCollection<string> AvailableComPorts { get; } = new();
-    public ObservableCollection<int> AvailableBaudRates { get; } = new() { 9600, 14400, 19200, 28800, 38400, 57600, 115200 };
+    public ObservableCollection<int> AvailableBaudRates { get; } = new() { 9600, 14400, 19200, 28800, 38400, 57600, 115200, 230400 };
     public ObservableCollection<PacketLogEntry> PacketLogs { get; } = new();
 
     private enum ConnectionStateKind { Disconnected, Connected, Error }
@@ -1185,9 +1185,9 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     /// <summary>
-    /// Demo macro: Executes a multi-axis Coordinated Interpolated Move (MVP COORD, 0x40|mask)
-    /// across all currently active axes using normalized stroke waypoints (safe for Center &amp; Corner origins),
-    /// and arms Command 138 Position Reached Notification.
+    /// Demo macro: Arms Command 138 Position Reached Notification and executes Coordinated Interpolated Moves
+    /// (MVP COORD, 0x40|groupMask; FW 1.47 supports up to 3 axes per interpolated group) across all currently active axes
+    /// using normalized stroke waypoints (safe for Center &amp; Corner origins).
     /// </summary>
     public void ExecuteDemoInterpolatedStep(int stepIndex)
     {
@@ -1201,7 +1201,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         ];
 
         double[] frac = waypoints[stepIndex % waypoints.Length];
-        int mask = 0;
+        int fullMask = 0;
+        var activeMotorIndices = new List<int>();
 
         foreach (var axVm in ActiveAxes)
         {
@@ -1213,14 +1214,33 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
             int targetPos = (int)Math.Round(minS + (maxS - minS) * frac[roleSlot]);
 
             Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.SCO, 1, (byte)idx, targetPos));
-            mask |= (1 << idx);
+            fullMask |= (1 << idx);
+            activeMotorIndices.Add(idx);
         }
 
-        if (mask == 0) return;
+        if (fullMask == 0) return;
 
-        byte coordMotMask = (byte)(0x40 | mask);
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MVP, 2, coordMotMask, 1));
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RequestTargetPositionReachedEvent, 0, 0, mask));
+        // FW 1.47: Arm Cmd 138 BEFORE issuing MVP commands (Type=1 continuous for multi-group steps)
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RequestTargetPositionReachedEvent, 1, 0, fullMask));
+
+        for (int i = 0; i < activeMotorIndices.Count; i += 3)
+        {
+            int count = Math.Min(3, activeMotorIndices.Count - i);
+            if (count >= 2)
+            {
+                int groupMask = 0;
+                for (int j = 0; j < count; j++)
+                    groupMask |= (1 << activeMotorIndices[i + j]);
+
+                byte coordMotMask = (byte)(0x40 | groupMask);
+                Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MVP, 2, coordMotMask, 1));
+            }
+            else
+            {
+                byte motorIdx = (byte)activeMotorIndices[i];
+                Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.MVP, 2, motorIdx, 1));
+            }
+        }
     }
 
     public void StopAllAxes()
@@ -1237,7 +1257,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public void ClearAllAlarms()
     {
-        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.CLE, 0, 0, 0));
+        Controller.ClearAllFaults();
     }
 
     private void OnProtocolTraceGenerated(ProtocolTraceEvent trace)

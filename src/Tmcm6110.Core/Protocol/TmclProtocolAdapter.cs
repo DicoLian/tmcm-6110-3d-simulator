@@ -44,14 +44,16 @@ public sealed class TmclProtocolAdapter : IProtocolAdapter
             rxBuffer.CopyTo(0, span, 0, 9);
             var candidate = TmclCommandPacket.FromBytes(span);
 
-            bool addrMatch = AcceptAnyModuleAddress || candidate.ModuleAddress == _controller.ModuleAddress;
+            bool addrMatch = AcceptAnyModuleAddress ||
+                             candidate.ModuleAddress == _controller.ModuleAddress ||
+                             (_controller.SecondarySerialAddress != 0 && candidate.ModuleAddress == _controller.SecondarySerialAddress);
             if (addrMatch && candidate.IsChecksumValid)
             {
                 rxBuffer.RemoveRange(0, 9);
                 TmclReplyPacket reply = _controller.ProcessCommand(candidate);
 
-                // Cmd 137 (Restore factory settings) does not send back a reply per manual section 3.35
-                if (candidate.CommandEnum != TmclCommand.RestoreFactorySettings)
+                // Suppress reply for Cmd 137, Secondary Serial Address (#87), and Suppress Reply (#255)
+                if (!_controller.ShouldSuppressReply(candidate))
                 {
                     sendReply(reply.ToBytes());
                     RawFrameEvent?.Invoke("RX/TX", candidate, reply);

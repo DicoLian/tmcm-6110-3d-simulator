@@ -82,7 +82,7 @@
     <sys:String x:Key="SnifferTitle">9-Byte Binary 封包監控與即時反組譯 (Packet Sniffer)</sys:String>
     <sys:String x:Key="LblTotalRxPackets">累計接收封包數: </sys:String>
     <sys:String x:Key="ChkHidePolling">隱藏高頻輪詢封包 (GAP / GGP / GIO / RFS STATUS) 避免洗版</sys:String>
-    <sys:String x:Key="BtnClearAllAlarms">清除全部 Alarm (CLE)</sys:String>
+    <sys:String x:Key="BtnClearAllAlarms">清除全部 Alarm</sys:String>
     <sys:String x:Key="BtnClearLogs">清空封包紀錄</sys:String>
 
     <sys:String x:Key="ColTimestamp">時間</sys:String>

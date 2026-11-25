@@ -432,11 +432,11 @@ public class AxisViewModel : INotifyPropertyChanged
         long minRaw = (long)Math.Round(_minLimitMm * stepsPerMm);
         long maxRaw = (long)Math.Round(_maxLimitMm * stepsPerMm);
 
-        int minSteps = (int)Math.Clamp(minRaw, -8_388_608L, 8_388_607L);
-        int maxSteps = (int)Math.Clamp(maxRaw, -8_388_608L, 8_388_607L);
+        int minSteps = (int)Math.Clamp(minRaw, int.MinValue, int.MaxValue);
+        int maxSteps = (int)Math.Clamp(maxRaw, int.MinValue, int.MaxValue);
         if (minSteps >= maxSteps)
         {
-            if (maxSteps < 8_388_607)
+            if (maxSteps < int.MaxValue)
                 maxSteps = minSteps + 1;
             else
                 minSteps = maxSteps - 1;

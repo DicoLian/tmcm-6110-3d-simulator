@@ -33,3 +33,6 @@ bld/
 
 ## Raw Screen Recordings (Replaced by compressed demo_highlight.mp4 & demo.gif)
 螢幕錄製*.mp4
+
+## Synology NAS Metadata
+@eaDir/

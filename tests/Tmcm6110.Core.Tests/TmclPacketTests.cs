@@ -129,12 +129,12 @@ public class TmclPacketTests
     {
         byte[] raw = new byte[9];
         raw[0] = 0x02;
-        Encoding.ASCII.GetBytes("0610V631").CopyTo(raw, 1);
+        Encoding.ASCII.GetBytes("6110V147").CopyTo(raw, 1);
 
         var reply = new TmclReplyPacket(raw);
 
         Assert.Equal(raw, reply.ToBytes());
-        Assert.Contains("0610V631", reply.ToDescription());
+        Assert.Contains("6110V147", reply.ToDescription());
     }
 
     [Fact]

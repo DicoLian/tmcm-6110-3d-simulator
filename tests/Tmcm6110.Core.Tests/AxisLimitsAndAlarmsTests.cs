@@ -86,7 +86,7 @@ public class AxisLimitsAndAlarmsTests
     }
 
     [Fact]
-    public void AlarmFaultInjection_StopsAxisAndBlocksMotionUntilClearedByCle()
+    public void AlarmFaultInjection_StallAutoClearsOnRead_FatalBlocksUntilClearFault_AndCleRejectsInvalidType()
     {
         var controller = new Tmcm6110Controller();
         var axis = controller.GetAxis(2);
@@ -98,37 +98,45 @@ public class AxisLimitsAndAlarmsTests
 
         Assert.True(controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value > 0);
 
-        // Inject StallGuard2 (#207) + TMC262 Driver Error (#208)
+        // Inject StallGuard2 (#207) + Fatal TMC262 OvertemperatureShutdown (#208)
         var injectedFlags = Tmc262DriverErrorFlags.StallGuard2Status | Tmc262DriverErrorFlags.OvertemperatureShutdown;
         axis.TriggerAlarm(injectedFlags, stallError: true);
 
         Assert.True(axis.HasActiveAlarm);
         Assert.Equal(AxisMotionState.AlarmStopped, axis.GetSnapshot().MotionState);
         Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value);
-        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ExtendedErrorFlags, 2, 0)).Value);
 
+        // Check #208 BEFORE #207 (because reading GAP #207 auto-clears StallGuard2 error flags in FW 1.47)
         int drvFlags = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.DriverErrorFlags, 2, 0)).Value;
         Assert.Equal((int)injectedFlags, drvFlags & (int)injectedFlags);
 
-        // Motion commands while alarm is latched must not move the axis
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ExtendedErrorFlags, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ExtendedErrorFlags, 2, 0)).Value);
+        int drvFlagsAfterRead207 = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.DriverErrorFlags, 2, 0)).Value;
+        Assert.Equal(0, drvFlagsAfterRead207 & (int)Tmc262DriverErrorFlags.StallGuard2Status);
+        Assert.NotEqual(0, drvFlagsAfterRead207 & (int)Tmc262DriverErrorFlags.OvertemperatureShutdown);
+
+        // CLE clears standalone TMCL error flags (types 0..5), NOT fatal TMC262 shutdown faults
+        for (byte t = 0; t <= 5; t++)
+            Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.CLE, t, 0, 0)).StatusEnum);
+        Assert.Equal(TmclStatus.WrongType, controller.ProcessCommand(Cmd(TmclCommand.CLE, 6, 0, 0)).StatusEnum);
+        Assert.True(axis.HasActiveAlarm);
+
+        // Motion commands while fatal TMC262 shutdown is active must remain blocked
         int posAtFault = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value;
         controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, posAtFault + 1000));
         for (int i = 0; i < 20; i++)
             controller.StepSimulation(0.01);
 
         Assert.Equal(posAtFault, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
-        Assert.True(axis.HasActiveAlarm);
 
-        // CLE (Cmd 36) clears alarm flags and restores motion capability
-        var cleReply = controller.ProcessCommand(Cmd(TmclCommand.CLE, 0, 0, 0));
-        Assert.Equal(TmclStatus.SuccessOk, cleReply.StatusEnum);
+        // Clearing the driver fault (or SoftwareReset Cmd 255) restores motion capability
+        controller.ClearAllFaults();
         Assert.False(axis.HasActiveAlarm);
-        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ExtendedErrorFlags, 2, 0)).Value);
         Assert.Equal(
             (int)Tmc262DriverErrorFlags.StandstillIndicator,
             controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.DriverErrorFlags, 2, 0)).Value);
 
-        // Axis can move again after CLE
         controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, posAtFault + 500));
         for (int i = 0; i < 150; i++)
             controller.StepSimulation(0.01);
@@ -275,7 +283,7 @@ public class AxisLimitsAndAlarmsTests
     }
 
     [Fact]
-    public void SixAxisInterpolatedMove_ReachesAllTargetsAndFiresCmd138()
+    public void CoordinatedInterpolation_CapsAt3Axes_AndTwoGroupsOrBit7MoveAll6WithCmd138()
     {
         var controller = new Tmcm6110Controller();
         var asyncReplies = new List<TmclReplyPacket>();
@@ -285,23 +293,123 @@ public class AxisLimitsAndAlarmsTests
         for (byte i = 0; i < 6; i++)
             controller.ProcessCommand(Cmd(TmclCommand.SCO, 1, i, targets[i]));
 
-        // Bit 6 (0x40) + 6-axis mask (0x3F) = 0x7F
-        var mvpReply = controller.ProcessCommand(Cmd(TmclCommand.MVP, 2, 0x7F, 1));
-        Assert.Equal(TmclStatus.SuccessOk, mvpReply.StatusEnum);
+        // 1. FW 1.47 Bit 6 (0x40) with >3 axes (0x7F): only the first 3 axes (0, 1, 2) start
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 2, 0x7F, 1)).StatusEnum);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, 0, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, 2, 0)).Value);
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, 3, 0)).Value);
 
-        controller.ProcessCommand(Cmd(TmclCommand.RequestTargetPositionReachedEvent, 0, 0, 0x3F));
-
-        for (int step = 0; step < 500 && asyncReplies.Count == 0; step++)
+        // Return axes 0..2 to 0 cleanly
+        for (int s = 0; s < 300; s++)
+            controller.StepSimulation(0.01);
+        for (byte i = 0; i < 3; i++)
+            controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, i, 0));
+        for (int s = 0; s < 300; s++)
             controller.StepSimulation(0.01);
 
-        Assert.Single(asyncReplies);
-        Assert.Equal(TmclStatus.TargetPositionReachedEvent, asyncReplies[0].StatusEnum);
-        Assert.Equal(0x3F, asyncReplies[0].Value);
+        // 2. Move all 6 axes using two 3-axis Bit 6 interpolated groups (0x47 and 0x78) with pre-armed Cmd 138
+        Assert.Equal(TmclStatus.SuccessOk,
+            controller.ProcessCommand(Cmd(TmclCommand.RequestTargetPositionReachedEvent, 1, 0, 0x3F)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 2, 0x47, 1)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 2, 0x78, 1)).StatusEnum);
 
+        int accumMask = 0;
+        for (int step = 0; step < 500 && accumMask != 0x3F; step++)
+        {
+            controller.StepSimulation(0.01);
+            foreach (var r in asyncReplies)
+                accumMask |= r.Value;
+        }
+
+        Assert.Equal(0x3F, accumMask);
         for (byte i = 0; i < 6; i++)
         {
             Assert.Equal(targets[i], controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, i, 0)).Value);
             Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, i, 0)).Value);
         }
+    }
+
+    [Fact]
+    public void ReferenceSearch_Mode2AndMode66_CalibratesEndSwitchDistanceAndLastRefPos()
+    {
+        var controller = new Tmcm6110Controller();
+        var axis = controller.GetAxis(0);
+        axis.SetVirtualStrokeLimits(-2000, 2000);
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.RightLimitSwitchDisable, 0, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.LeftLimitSwitchDisable, 0, 0));
+
+        // Mode 2: opposite (+Limit at +2000) then primary (-Limit at -2000), back off -> #196 & #197 populated
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, 0, 2));
+        controller.ProcessCommand(Cmd(TmclCommand.RFS, 0, 0, 0));
+        for (int i = 0; i < 300 && controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 0, 0)).Value != 0; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 0, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 0, 0)).Value);
+        int endSwitchDist = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.EndSwitchDistance, 0, 0)).Value;
+        int lastRefPos = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.LastReferencePosition, 0, 0)).Value;
+        Assert.True(endSwitchDist > 3000);
+        Assert.True(lastRefPos < -1500);
+
+        // Mode 66 (2 + 64): reversed direction (-Limit first, then +Limit)
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, 0, 66));
+        controller.ProcessCommand(Cmd(TmclCommand.RFS, 0, 0, 0));
+        for (int i = 0; i < 300 && controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 0, 0)).Value != 0; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 0, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 0, 0)).Value);
+        Assert.True(controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.LastReferencePosition, 0, 0)).Value > 1500);
+    }
+
+    [Fact]
+    public void ReferenceSearch_Mode5_BouncesOffLeftLimitAndHomesOnHomeSwitch()
+    {
+        var controller = new Tmcm6110Controller();
+        var axis = controller.GetAxis(1);
+        axis.SetVirtualStrokeLimits(-1000, 1000);
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.RightLimitSwitchDisable, 1, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.LeftLimitSwitchDisable, 1, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, 1, 5));
+
+        controller.ProcessCommand(Cmd(TmclCommand.RFS, 0, 1, 0));
+        // Hit left limit so search reverses direction toward positive
+        for (int i = 0; i < 60; i++)
+            controller.StepSimulation(0.01);
+
+        // Trigger Home switch (#9) briefly, then release so Mode 5 backs off to complete homing
+        axis.ManualRefSwitchOverride = true;
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.HomeSwitchState, 1, 0)).Value);
+        controller.StepSimulation(0.01);
+        axis.ManualRefSwitchOverride = false;
+        controller.StepSimulation(0.01);
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 1, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 1, 0)).Value);
+    }
+
+    [Fact]
+    public void SoftStopFlag149_DeceleratesSmoothlyAtLimitInsteadOfImmediateStop()
+    {
+        var controller = new Tmcm6110Controller();
+        var axis = controller.GetAxis(2);
+        axis.SetVirtualStrokeLimits(-500, 500);
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.RightLimitSwitchDisable, 2, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.SoftStopFlag, 2, 1));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.MaxAcceleration, 2, 200));
+
+        controller.ProcessCommand(Cmd(TmclCommand.ROR, 0, 2, 1500));
+        bool observedDeceleratingAfterLimit = false;
+        for (int i = 0; i < 150; i++)
+        {
+            controller.StepSimulation(0.01);
+            int rightLim = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.RightLimitSwitchStatus, 2, 0)).Value;
+            int spd = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value;
+            if (rightLim == 1 && spd > 0 && spd < 1500)
+                observedDeceleratingAfterLimit = true;
+        }
+
+        Assert.True(observedDeceleratingAfterLimit);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value);
     }
 }

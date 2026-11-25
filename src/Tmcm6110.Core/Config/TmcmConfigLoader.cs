@@ -22,7 +22,6 @@ public static class TmcmConfigLoader
         ["Left_limit_switch_disable"] = TmclAxisParam.LeftLimitSwitchDisable,
         ["Minimum_speed"] = TmclAxisParam.MinimumSpeed,
         ["Microstep_Resolution"] = TmclAxisParam.MicrostepResolution,
-        ["Reference_switch_tolerance"] = TmclAxisParam.RefSwitchTolerance,
         ["Soft_stop_flag"] = TmclAxisParam.SoftStopFlag,
         ["End_switch_power_down_mode"] = TmclAxisParam.EndSwitchPowerDownMode,
         ["Ramp_divisor"] = TmclAxisParam.RampDivisor,
@@ -169,7 +168,7 @@ public static class TmcmConfigLoader
             if (!byte.TryParse(match.Groups[3].Value, out byte motOrBank)) continue;
             if (!int.TryParse(match.Groups[4].Value, out int val)) continue;
 
-            if (cmd == "SAP" && motOrBank < Tmcm6110Controller.TotalAxes)
+            if (cmd == "SAP" && motOrBank < Tmcm6110Controller.TotalAxes && TmclAxisParam.IsValidParameter(typeNo))
             {
                 controller.GetAxis(motOrBank).SetParameter(typeNo, val);
                 controller.GetAxis(motOrBank).StoreParameterToEeprom(typeNo);

@@ -4,25 +4,37 @@ using Tmcm6110.Core.Protocol;
 namespace Tmcm6110.Core.Engine;
 
 /// <summary>
-/// Simulates a single stepper motor axis on the TMCM-6110 (TMC429 motion controller + TMC262 driver).
-/// Handles trapezoidal ramping, ROR/ROL/MST/MVP, Reference Search (RFS Mode 1..8 & +64/+128),
-/// Limit switches (+Limit / -Limit / Ref), and Alarm flags (StallGuard2 #207 & Driver Errors #208).
+/// Simulates a single stepper motor axis on the TMCM-6110 (TMC429 motion controller + TMC262 driver)
+/// following TMCM-6110 TMCL Firmware Manual V1.47 (Rev V1.23).
+/// Handles 32-bit trapezoidal ramping, ROR/ROL/MST/MVP, Reference Search (RFS Modes 1..8 &amp; +64/+128),
+/// Limit/Home switches (+Limit / -Limit / Home), and StallGuard2 (#206/#207) / TMC262 (#208) flags.
 /// </summary>
 public class AxisState : IMotionAxis
 {
+    private const Tmc262DriverErrorFlags FatalDriverShutdownMask =
+        Tmc262DriverErrorFlags.OvertemperatureShutdown |
+        Tmc262DriverErrorFlags.ShortToGroundA |
+        Tmc262DriverErrorFlags.ShortToGroundB;
+
     private readonly object _syncLock = new();
     private readonly Dictionary<byte, int> _params = new();
     private readonly Dictionary<byte, int> _eepromParams = new();
-    private readonly int[] _coordinates = new int[64]; // Supports 0..56 coordinate registers
+    private readonly int[] _coordinates = new int[21]; // Coordinate registers 0..20 (FW 1.47)
+    private readonly int[] _eepromCoordinates = new int[21]; // EEPROM mirror for coordinates 1..20
 
     // High-precision floating-point accumulators for smooth 3D animation & physics
     private double _exactPosition;
     private double _exactSpeed;
     private double _interpolationSpeedOverride; // Non-zero when executing interpolated MVP COORD
+    private double _interpolationAccelOverride; // Non-zero when executing interpolated MVP COORD
 
     // Reference Search (RFS) internal state machine
-    // 0 = Inactive, 1 = Searching primary switch, 2 = Backing off switch, 3 = Final slow calibration
+    // 0 = Inactive, 1 = Searching first/primary/home switch, 2 = Searching primary limit (Modes 2/3),
+    // 3 = Backing off switch at switch speed (and calibrating center)
     private int _rfsState;
+    private int _rfsSearchDir;
+    private int _rfsFirstSwitchPos;
+    private int _rfsSwitchEnterPos;
 
     // Physical stroke limits (in microsteps) for automatic virtual limit switch triggering
     private int _virtualMinStrokeSteps = -100_000;
@@ -120,7 +132,7 @@ public class AxisState : IMotionAxis
             _params[TmclAxisParam.AbsoluteMaxCurrent] = 128;
             _params[TmclAxisParam.StandbyCurrent] = 8;
             _params[TmclAxisParam.TargetPosReached] = 1;
-            _params[TmclAxisParam.RefSwitchStatus] = 0;
+            _params[TmclAxisParam.HomeSwitchState] = 0;
             _params[TmclAxisParam.RightLimitSwitchStatus] = 0;
             _params[TmclAxisParam.LeftLimitSwitchStatus] = 0;
             _params[TmclAxisParam.RightLimitSwitchDisable] = 1; // Default gantry setting: 1
@@ -128,12 +140,9 @@ public class AxisState : IMotionAxis
             _params[TmclAxisParam.MinimumSpeed] = 1;
             _params[TmclAxisParam.ActualAcceleration] = 0;
             _params[TmclAxisParam.RampMode] = 0;                // 0 = Position mode
-            _params[TmclAxisParam.MicrostepResolution] = isActiveXyz ? 6 : 8; // 6 = 64 microsteps
-            _params[TmclAxisParam.RefSwitchTolerance] = 0;
-            _params[TmclAxisParam.SnapshotPosition] = 0;
+            _params[TmclAxisParam.MicrostepResolution] = isActiveXyz ? 6 : 8; // 6 = 64 microsteps, 8 = 256 microsteps
             _params[TmclAxisParam.SoftStopFlag] = 0;
             _params[TmclAxisParam.EndSwitchPowerDownMode] = 0;
-            _params[TmclAxisParam.PositionLatchFlag] = 0;
             _params[TmclAxisParam.RampDivisor] = 7;
             _params[TmclAxisParam.PulseDivisor] = 3;
             _params[TmclAxisParam.StepInterpolation] = 0;
@@ -156,6 +165,7 @@ public class AxisState : IMotionAxis
             _params[TmclAxisParam.ShortToGroundProtection] = 0;
             _params[TmclAxisParam.ShortDetectionTimer] = 0;
             _params[TmclAxisParam.VSense] = 1;
+            _params[TmclAxisParam.SmartEnergyActualCurrent] = Math.Clamp(_params[TmclAxisParam.StandbyCurrent] / 8, 0, 31);
             _params[TmclAxisParam.SmartEnergyStallVelocity] = 0;
             _params[TmclAxisParam.SmartEnergyThresholdSpeed] = 0;
             _params[TmclAxisParam.SmartEnergySlowRunCurrent] = 0;
@@ -163,12 +173,13 @@ public class AxisState : IMotionAxis
             _params[TmclAxisParam.ReferenceSearchMode] = isActiveXyz ? 65 : 1; // 65 = Search Right Limit Switch
             _params[TmclAxisParam.ReferenceSearchSpeed] = isActiveXyz ? 1000 : 500;
             _params[TmclAxisParam.ReferenceSwitchSpeed] = isActiveXyz ? 500 : 100;
+            _params[TmclAxisParam.EndSwitchDistance] = 0;
+            _params[TmclAxisParam.LastReferencePosition] = 0;
             _params[TmclAxisParam.BoostCurrent] = 0;
             _params[TmclAxisParam.FreewheelingDelay] = 0;
-            _params[TmclAxisParam.ActualLoadValue] = 120;       // Normal nominal load (0..1023, lower = higher load)
+            _params[TmclAxisParam.ActualLoadValue] = 250;       // Normal nominal load at standstill (0..1023, lower = higher load)
             _params[TmclAxisParam.ExtendedErrorFlags] = 0;      // 0 = No StallGuard error
             _params[TmclAxisParam.DriverErrorFlags] = (int)Tmc262DriverErrorFlags.StandstillIndicator;
-            _params[TmclAxisParam.EncoderPosition] = 0;
             _params[TmclAxisParam.GroupIndex] = 0;
             _params[TmclAxisParam.PowerDownDelay] = 200;
 
@@ -176,10 +187,18 @@ public class AxisState : IMotionAxis
             foreach (var kv in _params)
                 _eepromParams[kv.Key] = kv.Value;
 
+            Array.Clear(_coordinates);
+            Array.Clear(_eepromCoordinates);
+
             _exactPosition = 0;
             _exactSpeed = 0;
             _interpolationSpeedOverride = 0;
+            _interpolationAccelOverride = 0;
             _rfsState = 0;
+            _rfsSearchDir = 0;
+            _rfsFirstSwitchPos = 0;
+            _rfsSwitchEnterPos = 0;
+            _manualAlarmLatched = false;
 
             int defaultHalfStroke = axisIndex == 0 ? 45_000 : 100_000;
             _virtualMinStrokeSteps = -defaultHalfStroke;
@@ -195,11 +214,10 @@ public class AxisState : IMotionAxis
             UpdateSwitchAndStatusRegistersUnsafe();
             int val = _params.TryGetValue(paramNumber, out int v) ? v : 0;
 
-            // According to TMCM-6110 manual, reading #207 clears the StallGuard error flag
-            // However, if UI manual alarm is latched, keep it until user clears it or CLE/motion occurs
-            if (clearReadFlags && paramNumber == TmclAxisParam.ExtendedErrorFlags && !_manualAlarmLatched)
+            // According to TMCM-6110 FW 1.47 Table 16, reading #207 automatically clears the StallGuard error flag
+            if (clearReadFlags && paramNumber == TmclAxisParam.ExtendedErrorFlags)
             {
-                _params[TmclAxisParam.ExtendedErrorFlags] = 0;
+                ClearStallGuardErrorUnsafe();
             }
             return val;
         }
@@ -214,15 +232,19 @@ public class AxisState : IMotionAxis
             switch (paramNumber)
             {
                 case TmclAxisParam.TargetPosition: // SAP 0: acts like MVP ABS
-                    _params[TmclAxisParam.RampMode] = 0;
-                    _interpolationSpeedOverride = 0;
-                    _rfsState = 0;
+                    ClearStallGuardErrorUnsafe();
+                    if (!HasFatalDriverFaultUnsafe())
+                    {
+                        _params[TmclAxisParam.RampMode] = 0;
+                        _interpolationSpeedOverride = 0;
+                        _interpolationAccelOverride = 0;
+                        _rfsState = 0;
+                    }
                     UpdateSwitchAndStatusRegistersUnsafe();
                     break;
 
                 case TmclAxisParam.ActualPosition: // SAP 1: overwrites position counter (e.g. homing zero)
                     _exactPosition = value;
-                    _params[TmclAxisParam.EncoderPosition] = value;
                     // If motor was idle, sync TargetPosition so setting ActualPosition=0 doesn't cause unwanted runaway
                     if (Math.Abs(_exactSpeed) < 0.01 && _rfsState == 0)
                     {
@@ -259,13 +281,61 @@ public class AxisState : IMotionAxis
         }
     }
 
-    // Coordinate memory (SCO / GCO / CCO)
-    public void SetCoordinate(int index, int value)
+    /// <summary>
+    /// Simulates power-cycle/software reset restoration from EEPROM (Command 255).
+    /// </summary>
+    public void RestoreAllFromEeprom(bool restoreCoordinates)
+    {
+        lock (_syncLock)
+        {
+            foreach (var kv in _eepromParams)
+                _params[kv.Key] = kv.Value;
+
+            _params[TmclAxisParam.TargetPosition] = 0;
+            _params[TmclAxisParam.ActualPosition] = 0;
+            _params[TmclAxisParam.TargetSpeed] = 0;
+            _params[TmclAxisParam.ActualSpeed] = 0;
+            _params[TmclAxisParam.TargetPosReached] = 1;
+            _params[TmclAxisParam.ActualAcceleration] = 0;
+            _params[TmclAxisParam.RampMode] = 0;
+            _params[TmclAxisParam.EndSwitchDistance] = 0;
+            _params[TmclAxisParam.LastReferencePosition] = 0;
+            _params[TmclAxisParam.ActualLoadValue] = 250;
+            _params[TmclAxisParam.ExtendedErrorFlags] = 0;
+            _params[TmclAxisParam.DriverErrorFlags] = (int)Tmc262DriverErrorFlags.StandstillIndicator;
+
+            Array.Clear(_coordinates);
+            if (restoreCoordinates)
+            {
+                for (int i = 1; i < _coordinates.Length; i++)
+                    _coordinates[i] = _eepromCoordinates[i];
+            }
+
+            _exactPosition = 0;
+            _exactSpeed = 0;
+            _interpolationSpeedOverride = 0;
+            _interpolationAccelOverride = 0;
+            _rfsState = 0;
+            _rfsSearchDir = 0;
+            _rfsFirstSwitchPos = 0;
+            _rfsSwitchEnterPos = 0;
+            _manualAlarmLatched = false;
+            UpdateSwitchAndStatusRegistersUnsafe();
+        }
+    }
+
+    // Coordinate memory (SCO / GCO / CCO / ACO) for indices 0..20
+    public void SetCoordinate(int index, int value, bool storeInEeprom = false)
     {
         lock (_syncLock)
         {
             if (index >= 0 && index < _coordinates.Length)
+            {
                 _coordinates[index] = value;
+                // Coordinate #0 is always stored in RAM only per FW 1.47 Section 3.7.24
+                if (storeInEeprom && index > 0)
+                    _eepromCoordinates[index] = value;
+            }
         }
     }
 
@@ -277,12 +347,51 @@ public class AxisState : IMotionAxis
         }
     }
 
-    public void CaptureCoordinate(int index)
+    public int CaptureCoordinate(int index, bool storeInEeprom = false)
     {
         lock (_syncLock)
         {
             if (index >= 0 && index < _coordinates.Length)
-                _coordinates[index] = _params[TmclAxisParam.ActualPosition];
+            {
+                int pos = _params[TmclAxisParam.ActualPosition];
+                _coordinates[index] = pos;
+                if (storeInEeprom && index > 0)
+                    _eepromCoordinates[index] = pos;
+                return pos;
+            }
+            return 0;
+        }
+    }
+
+    public void CopyCoordinateRamToEeprom(int index)
+    {
+        lock (_syncLock)
+        {
+            if (index == 0)
+            {
+                for (int i = 1; i < _coordinates.Length; i++)
+                    _eepromCoordinates[i] = _coordinates[i];
+            }
+            else if (index >= 1 && index < _coordinates.Length)
+            {
+                _eepromCoordinates[index] = _coordinates[index];
+            }
+        }
+    }
+
+    public void CopyCoordinateEepromToRam(int index)
+    {
+        lock (_syncLock)
+        {
+            if (index == 0)
+            {
+                for (int i = 1; i < _coordinates.Length; i++)
+                    _coordinates[i] = _eepromCoordinates[i];
+            }
+            else if (index >= 1 && index < _coordinates.Length)
+            {
+                _coordinates[index] = _eepromCoordinates[index];
+            }
         }
     }
 
@@ -291,11 +400,13 @@ public class AxisState : IMotionAxis
     {
         lock (_syncLock)
         {
-            if (_manualAlarmLatched) return;
+            ClearStallGuardErrorUnsafe();
+            if (HasFatalDriverFaultUnsafe()) return;
             _rfsState = 0;
             _interpolationSpeedOverride = 0;
+            _interpolationAccelOverride = 0;
             _params[TmclAxisParam.RampMode] = 2; // Velocity mode
-            _params[TmclAxisParam.TargetSpeed] = Math.Clamp(Math.Abs(velocity), 0, 2047);
+            _params[TmclAxisParam.TargetSpeed] = Math.Clamp(velocity, -2047, 2047);
             _params[TmclAxisParam.TargetPosReached] = 0;
         }
     }
@@ -304,39 +415,60 @@ public class AxisState : IMotionAxis
     {
         lock (_syncLock)
         {
-            if (_manualAlarmLatched) return;
+            ClearStallGuardErrorUnsafe();
+            if (HasFatalDriverFaultUnsafe()) return;
             _rfsState = 0;
             _interpolationSpeedOverride = 0;
+            _interpolationAccelOverride = 0;
             _params[TmclAxisParam.RampMode] = 2; // Velocity mode
-            _params[TmclAxisParam.TargetSpeed] = -Math.Clamp(Math.Abs(velocity), 0, 2047);
+            _params[TmclAxisParam.TargetSpeed] = Math.Clamp(-velocity, -2047, 2047);
             _params[TmclAxisParam.TargetPosReached] = 0;
         }
     }
 
+    /// <summary>
+    /// MST (Motor Stop) per FW 1.47 Section 3.7.3: selects velocity mode and sets target speed to 0 (soft stop).
+    /// </summary>
     public void StopMotor()
     {
         lock (_syncLock)
         {
             _rfsState = 0;
             _interpolationSpeedOverride = 0;
+            _interpolationAccelOverride = 0;
+            _params[TmclAxisParam.RampMode] = 2; // Velocity mode
             _params[TmclAxisParam.TargetSpeed] = 0;
-            _exactSpeed = 0;
-            _params[TmclAxisParam.ActualSpeed] = 0;
-            _params[TmclAxisParam.ActualAcceleration] = 0;
-            _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
             UpdateSwitchAndStatusRegistersUnsafe();
         }
     }
 
-    public void MoveToAbsolute(int targetPos, double? interpolatedMaxSpeed = null)
+    private void HardStopUnsafe()
+    {
+        _rfsState = 0;
+        _interpolationSpeedOverride = 0;
+        _interpolationAccelOverride = 0;
+        _params[TmclAxisParam.TargetSpeed] = 0;
+        _exactSpeed = 0;
+        _params[TmclAxisParam.ActualSpeed] = 0;
+        _params[TmclAxisParam.ActualAcceleration] = 0;
+        _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
+        UpdateSwitchAndStatusRegistersUnsafe();
+    }
+
+    public void MoveToAbsolute(int targetPos, double? interpolatedMaxSpeed = null) =>
+        MoveToAbsolute(targetPos, interpolatedMaxSpeed, null);
+
+    public void MoveToAbsolute(int targetPos, double? interpolatedMaxSpeed, double? interpolatedMaxAccel)
     {
         lock (_syncLock)
         {
-            if (_manualAlarmLatched) return;
+            ClearStallGuardErrorUnsafe();
+            if (HasFatalDriverFaultUnsafe()) return;
             _rfsState = 0;
             _params[TmclAxisParam.RampMode] = 0; // Position mode
-            _params[TmclAxisParam.TargetPosition] = Math.Clamp(targetPos, -8388608, 8388607);
+            _params[TmclAxisParam.TargetPosition] = targetPos; // Full 32-bit signed position (FW 1.47)
             _interpolationSpeedOverride = interpolatedMaxSpeed ?? 0;
+            _interpolationAccelOverride = interpolatedMaxAccel ?? 0;
             UpdateSwitchAndStatusRegistersUnsafe();
         }
     }
@@ -345,9 +477,11 @@ public class AxisState : IMotionAxis
     {
         lock (_syncLock)
         {
-            if (_manualAlarmLatched) return;
-            int currentTargetOrActual = _params[TmclAxisParam.ActualPosition];
-            MoveToAbsolute(currentTargetOrActual + offset);
+            ClearStallGuardErrorUnsafe();
+            if (HasFatalDriverFaultUnsafe()) return;
+            long target = (long)_params[TmclAxisParam.ActualPosition] + offset;
+            int clamped = (int)Math.Clamp(target, int.MinValue, int.MaxValue);
+            MoveToAbsolute(clamped, null, null);
         }
     }
 
@@ -356,9 +490,26 @@ public class AxisState : IMotionAxis
     {
         lock (_syncLock)
         {
-            if (_manualAlarmLatched) return;
-            _rfsState = 1; // Phase 1: Search reference/limit switch at ReferenceSearchSpeed (#194)
+            ClearStallGuardErrorUnsafe();
+            if (HasFatalDriverFaultUnsafe()) return;
+
+            int rfsMode = _params[TmclAxisParam.ReferenceSearchMode];
+            int baseMode = rfsMode & 0x0F;
+            bool rightInsteadOfLeft = (rfsMode & 64) != 0;
+
+            _rfsState = 1;
+            _rfsFirstSwitchPos = _params[TmclAxisParam.ActualPosition];
+            _rfsSwitchEnterPos = _params[TmclAxisParam.ActualPosition];
+            _rfsSearchDir = baseMode switch
+            {
+                2 or 3 => rightInsteadOfLeft ? -1 : 1, // First search opposite limit
+                5 or 7 => -1,
+                6 or 8 => 1,
+                _ => rightInsteadOfLeft ? 1 : -1
+            };
+
             _interpolationSpeedOverride = 0;
+            _interpolationAccelOverride = 0;
             _params[TmclAxisParam.TargetPosReached] = 0;
         }
     }
@@ -367,8 +518,7 @@ public class AxisState : IMotionAxis
     {
         lock (_syncLock)
         {
-            _rfsState = 0;
-            StopMotor();
+            HardStopUnsafe();
         }
     }
 
@@ -383,6 +533,21 @@ public class AxisState : IMotionAxis
     // Alarm / Fault Injection & Clearing
     private bool _manualAlarmLatched;
 
+    private bool HasFatalDriverFaultUnsafe() =>
+        (_params[TmclAxisParam.DriverErrorFlags] & (int)FatalDriverShutdownMask) != 0;
+
+    private void ClearStallGuardErrorUnsafe()
+    {
+        _params[TmclAxisParam.ExtendedErrorFlags] = 0;
+        _params[TmclAxisParam.DriverErrorFlags] &= ~(int)Tmc262DriverErrorFlags.StallGuard2Status;
+        if (_params[TmclAxisParam.ActualLoadValue] == 0)
+            _params[TmclAxisParam.ActualLoadValue] = Math.Abs(_exactSpeed) < 0.05 ? 250 : 110;
+
+        int remainingFaultBits = _params[TmclAxisParam.DriverErrorFlags] & ~(int)Tmc262DriverErrorFlags.StandstillIndicator;
+        if (remainingFaultBits == 0)
+            _manualAlarmLatched = false;
+    }
+
     public bool HasActiveAlarm
     {
         get
@@ -396,7 +561,9 @@ public class AxisState : IMotionAxis
         }
     }
 
-    public void TriggerAlarm(Tmc262DriverErrorFlags driverError = Tmc262DriverErrorFlags.StallGuard2Status | Tmc262DriverErrorFlags.OvertemperatureWarning, bool stallError = true)
+    public void TriggerAlarm(
+        Tmc262DriverErrorFlags driverError = Tmc262DriverErrorFlags.StallGuard2Status | Tmc262DriverErrorFlags.OvertemperatureShutdown,
+        bool stallError = true)
     {
         lock (_syncLock)
         {
@@ -405,7 +572,7 @@ public class AxisState : IMotionAxis
                 _params[TmclAxisParam.ExtendedErrorFlags] = 1; // StallGuard error
             _params[TmclAxisParam.DriverErrorFlags] = (int)(driverError | Tmc262DriverErrorFlags.StandstillIndicator);
             _params[TmclAxisParam.ActualLoadValue] = 0; // 0 = Max stall load in StallGuard2
-            StopMotor();
+            HardStopUnsafe();
         }
     }
 
@@ -418,13 +585,13 @@ public class AxisState : IMotionAxis
             _params[TmclAxisParam.DriverErrorFlags] = Math.Abs(_exactSpeed) < 0.1
                 ? (int)Tmc262DriverErrorFlags.StandstillIndicator
                 : 0;
-            _params[TmclAxisParam.ActualLoadValue] = 120;
+            _params[TmclAxisParam.ActualLoadValue] = Math.Abs(_exactSpeed) < 0.1 ? 250 : 110;
         }
     }
 
     /// <summary>
     /// Advances the physics simulation by dtSeconds (called at ~100-500 Hz).
-    /// Speed scale factor converts TMCL speed parameter (0..2047) to steps/sec.
+    /// Speed scale factor converts TMCL speed parameter (-2047..2047) to steps/sec.
     /// </summary>
     public void StepPhysics(double dtSeconds, double speedMultiplier = 10.0)
     {
@@ -432,10 +599,11 @@ public class AxisState : IMotionAxis
         {
             UpdateSwitchAndStatusRegistersUnsafe();
 
-            if (_manualAlarmLatched)
+            if (HasFatalDriverFaultUnsafe())
             {
                 _exactSpeed = 0;
                 _params[TmclAxisParam.ActualSpeed] = 0;
+                _params[TmclAxisParam.ActualAcceleration] = 0;
                 return;
             }
 
@@ -447,33 +615,49 @@ public class AxisState : IMotionAxis
                 return;
             }
 
+            double prevSpeed = _exactSpeed;
             int rampMode = _params[TmclAxisParam.RampMode];
-            double maxAccelParam = Math.Max(10, _params[TmclAxisParam.MaxAcceleration]);
+            double maxAccelParam = _interpolationAccelOverride > 0
+                ? _interpolationAccelOverride
+                : Math.Max(1, _params[TmclAxisParam.MaxAcceleration]);
             double accelStepsPerSec2 = maxAccelParam * speedMultiplier * 2.5;
+            double maxDeltaV = accelStepsPerSec2 * dtSeconds;
 
             bool rightLimHit = _params[TmclAxisParam.RightLimitSwitchStatus] != 0;
             bool leftLimHit = _params[TmclAxisParam.LeftLimitSwitchStatus] != 0;
             bool rightLimDisabled = _params[TmclAxisParam.RightLimitSwitchDisable] != 0;
             bool leftLimDisabled = _params[TmclAxisParam.LeftLimitSwitchDisable] != 0;
+            bool softStopOnLimit = _params[TmclAxisParam.SoftStopFlag] != 0;
             int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
             int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
 
             if (rampMode == 2)
             {
-                // Velocity Mode (ROR / ROL)
+                // Velocity Mode (ROR / ROL / MST Soft Stop)
                 double desiredParamSpeed = _params[TmclAxisParam.TargetSpeed];
 
-                // Check hardware limit switch stop if enabled (#12 == 0 or #13 == 0)
-                if ((desiredParamSpeed > 0 && rightLimHit && !rightLimDisabled) ||
-                    (desiredParamSpeed < 0 && leftLimHit && !leftLimDisabled))
+                bool blockedRight = (desiredParamSpeed > 0 || _exactSpeed > 0.05) && rightLimHit && !rightLimDisabled;
+                bool blockedLeft = (desiredParamSpeed < 0 || _exactSpeed < -0.05) && leftLimHit && !leftLimDisabled;
+
+                if (blockedRight || blockedLeft)
                 {
-                    _exactSpeed = 0;
                     _params[TmclAxisParam.TargetSpeed] = 0;
+                    if (!softStopOnLimit)
+                    {
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        if (Math.Abs(_exactSpeed) <= maxDeltaV)
+                            _exactSpeed = 0;
+                        else
+                            _exactSpeed -= Math.Sign(_exactSpeed) * maxDeltaV;
+                        _exactPosition += _exactSpeed * dtSeconds;
+                    }
                 }
                 else
                 {
                     double desiredStepsPerSec = desiredParamSpeed * speedMultiplier;
-                    double maxDeltaV = accelStepsPerSec2 * dtSeconds;
                     if (Math.Abs(desiredStepsPerSec - _exactSpeed) <= maxDeltaV)
                         _exactSpeed = desiredStepsPerSec;
                     else
@@ -485,14 +669,16 @@ public class AxisState : IMotionAxis
                     {
                         if (_exactSpeed > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
                         {
-                            _exactPosition = effectiveMax;
-                            _exactSpeed = 0;
+                            if (!softStopOnLimit)
+                                _exactPosition = effectiveMax;
+                            _exactSpeed = softStopOnLimit ? Math.Max(0, _exactSpeed - maxDeltaV) : 0;
                             _params[TmclAxisParam.TargetSpeed] = 0;
                         }
                         else if (_exactSpeed < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
                         {
-                            _exactPosition = effectiveMin;
-                            _exactSpeed = 0;
+                            if (!softStopOnLimit)
+                                _exactPosition = effectiveMin;
+                            _exactSpeed = softStopOnLimit ? Math.Min(0, _exactSpeed + maxDeltaV) : 0;
                             _params[TmclAxisParam.TargetSpeed] = 0;
                         }
                     }
@@ -502,28 +688,38 @@ public class AxisState : IMotionAxis
             {
                 // Position Mode (RampMode 0 or 1: MVP ABS / REL / COORD)
                 int targetPos = _params[TmclAxisParam.TargetPosition];
-                double dist = targetPos - _exactPosition;
+                double dist = (double)targetPos - _exactPosition;
 
-                if (Math.Abs(dist) < 0.5)
+                if (Math.Abs(dist) < 0.5 && Math.Abs(_exactSpeed) <= maxDeltaV)
                 {
                     _exactPosition = targetPos;
                     _exactSpeed = 0;
                     _interpolationSpeedOverride = 0;
+                    _interpolationAccelOverride = 0;
                     _params[TmclAxisParam.TargetSpeed] = 0;
                     _params[TmclAxisParam.ActualAcceleration] = 0;
                 }
                 else
                 {
-                    int dir = Math.Sign(dist);
+                    int dir = Math.Abs(dist) >= 0.5 ? Math.Sign(dist) : Math.Sign(_exactSpeed);
 
                     // Hardware limit stop check when limit switch disable is 0
                     if ((dir > 0 && rightLimHit && !rightLimDisabled) ||
                         (dir < 0 && leftLimHit && !leftLimDisabled))
                     {
-                        _exactSpeed = 0;
-                        _interpolationSpeedOverride = 0;
-                        _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
-                        _params[TmclAxisParam.TargetSpeed] = 0;
+                        if (!softStopOnLimit || Math.Abs(_exactSpeed) <= maxDeltaV)
+                        {
+                            _exactSpeed = 0;
+                            _interpolationSpeedOverride = 0;
+                            _interpolationAccelOverride = 0;
+                            _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
+                            _params[TmclAxisParam.TargetSpeed] = 0;
+                        }
+                        else
+                        {
+                            _exactSpeed -= Math.Sign(_exactSpeed) * maxDeltaV;
+                            _exactPosition += _exactSpeed * dtSeconds;
+                        }
                     }
                     else
                     {
@@ -536,9 +732,8 @@ public class AxisState : IMotionAxis
                         // Trapezoidal braking distance: v_braking = sqrt(2 * a * |dist|)
                         double brakingSpeed = Math.Sqrt(2.0 * accelStepsPerSec2 * Math.Abs(dist));
                         double targetSpeedMag = Math.Min(maxSpeedStepsPerSec, brakingSpeed);
-                        double desiredVel = dir * targetSpeedMag;
+                        double desiredVel = Math.Sign(dist) * targetSpeedMag;
 
-                        double maxDeltaV = accelStepsPerSec2 * dtSeconds;
                         double nextSpeed;
                         if (Math.Abs(desiredVel - _exactSpeed) <= maxDeltaV)
                             nextSpeed = desiredVel;
@@ -547,11 +742,12 @@ public class AxisState : IMotionAxis
 
                         double stepDelta = nextSpeed * dtSeconds;
                         // Prevent overshooting target position within a single tick
-                        if (Math.Abs(stepDelta) >= Math.Abs(dist))
+                        if (Math.Abs(stepDelta) >= Math.Abs(dist) && Math.Sign(stepDelta) == Math.Sign(dist))
                         {
                             _exactPosition = targetPos;
                             _exactSpeed = 0;
                             _interpolationSpeedOverride = 0;
+                            _interpolationAccelOverride = 0;
                         }
                         else
                         {
@@ -561,21 +757,37 @@ public class AxisState : IMotionAxis
 
                         if (_autoTriggerStrokeLimits)
                         {
-                            if (dir > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
+                            if (_exactSpeed > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
                             {
-                                _exactPosition = effectiveMax;
-                                _exactSpeed = 0;
-                                _interpolationSpeedOverride = 0;
-                                _params[TmclAxisParam.TargetPosition] = effectiveMax;
-                                _params[TmclAxisParam.TargetSpeed] = 0;
+                                if (!softStopOnLimit)
+                                {
+                                    _exactPosition = effectiveMax;
+                                    _exactSpeed = 0;
+                                    _interpolationSpeedOverride = 0;
+                                    _interpolationAccelOverride = 0;
+                                    _params[TmclAxisParam.TargetPosition] = effectiveMax;
+                                    _params[TmclAxisParam.TargetSpeed] = 0;
+                                }
+                                else
+                                {
+                                    _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
+                                }
                             }
-                            else if (dir < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
+                            else if (_exactSpeed < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
                             {
-                                _exactPosition = effectiveMin;
-                                _exactSpeed = 0;
-                                _interpolationSpeedOverride = 0;
-                                _params[TmclAxisParam.TargetPosition] = effectiveMin;
-                                _params[TmclAxisParam.TargetSpeed] = 0;
+                                if (!softStopOnLimit)
+                                {
+                                    _exactPosition = effectiveMin;
+                                    _exactSpeed = 0;
+                                    _interpolationSpeedOverride = 0;
+                                    _interpolationAccelOverride = 0;
+                                    _params[TmclAxisParam.TargetPosition] = effectiveMin;
+                                    _params[TmclAxisParam.TargetSpeed] = 0;
+                                }
+                                else
+                                {
+                                    _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
+                                }
                             }
                         }
 
@@ -585,8 +797,27 @@ public class AxisState : IMotionAxis
             }
 
             _params[TmclAxisParam.ActualPosition] = (int)Math.Round(_exactPosition);
-            _params[TmclAxisParam.EncoderPosition] = _params[TmclAxisParam.ActualPosition];
             _params[TmclAxisParam.ActualSpeed] = (int)Math.Round(_exactSpeed / speedMultiplier);
+
+            if (dtSeconds > 1e-9 && Math.Abs(_exactSpeed - prevSpeed) > 1e-6)
+            {
+                double accelInternal = ((_exactSpeed - prevSpeed) / dtSeconds) / (speedMultiplier * 2.5);
+                _params[TmclAxisParam.ActualAcceleration] = Math.Clamp((int)Math.Round(accelInternal), -2047, 2047);
+            }
+            else
+            {
+                _params[TmclAxisParam.ActualAcceleration] = 0;
+            }
+
+            // Automatic StallGuard2 stop on stall (#181)
+            int stallVel = _params[TmclAxisParam.SmartEnergyStallVelocity];
+            if (stallVel > 0 && Math.Abs(_params[TmclAxisParam.ActualSpeed]) > stallVel && _params[TmclAxisParam.ActualLoadValue] == 0)
+            {
+                _manualAlarmLatched = true;
+                _params[TmclAxisParam.ExtendedErrorFlags] = 1;
+                _params[TmclAxisParam.DriverErrorFlags] |= (int)Tmc262DriverErrorFlags.StallGuard2Status;
+                HardStopUnsafe();
+            }
 
             UpdateSwitchAndStatusRegistersUnsafe();
         }
@@ -595,62 +826,252 @@ public class AxisState : IMotionAxis
     private void StepReferenceSearchUnsafe(double dtSeconds, double speedMultiplier)
     {
         int rfsMode = _params[TmclAxisParam.ReferenceSearchMode];
-        // In TMCM-6110: Bit 6 (+64) = Search Right Limit Switch instead of Left Limit Switch
-        // Default gantry profile uses Mode 65 (1 + 64) for Z, Y, X axes.
-        bool searchRightSwitch = (rfsMode & 64) != 0;
-        int searchDir = searchRightSwitch ? 1 : -1;
+        int baseMode = rfsMode & 0x0F;
+        bool rightInsteadOfLeft = (rfsMode & 64) != 0;
+        bool invertHome = (rfsMode & 128) != 0;
 
-        double searchSpeedParam = Math.Max(10, _params[TmclAxisParam.ReferenceSearchSpeed]);
-        double switchSpeedParam = Math.Max(5, _params[TmclAxisParam.ReferenceSwitchSpeed]);
+        double searchSpeedParam = Math.Max(0, _params[TmclAxisParam.ReferenceSearchSpeed]);
+        double switchSpeedParam = Math.Max(0, _params[TmclAxisParam.ReferenceSwitchSpeed]);
 
-        bool targetSwitchActive = searchRightSwitch
-            ? (_params[TmclAxisParam.RightLimitSwitchStatus] != 0)
-            : (_params[TmclAxisParam.LeftLimitSwitchStatus] != 0 || _params[TmclAxisParam.RefSwitchStatus] != 0);
+        bool leftHit = _params[TmclAxisParam.LeftLimitSwitchStatus] != 0;
+        bool rightHit = _params[TmclAxisParam.RightLimitSwitchStatus] != 0;
+        bool primaryLimitHit = rightInsteadOfLeft ? rightHit : leftHit;
+        bool oppositeLimitHit = rightInsteadOfLeft ? leftHit : rightHit;
+        bool homeActive = invertHome ? !ManualRefSwitchOverride : ManualRefSwitchOverride;
 
-        if (_rfsState == 1)
+        int primaryDir = rightInsteadOfLeft ? 1 : -1;
+        bool clampToLimits = _autoTriggerStrokeLimits && baseMode is >= 1 and <= 6;
+        int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+        int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
+
+        void AdvancePosition(double velocityStepsPerSec)
         {
-            // Phase 1: Move towards primary reference switch at ReferenceSearchSpeed (#194)
-            if (targetSwitchActive)
+            _exactSpeed = velocityStepsPerSec;
+            _exactPosition += _exactSpeed * dtSeconds;
+            if (clampToLimits)
             {
-                _rfsState = 2; // Switch hit! Transition to backoff phase
-                _exactSpeed = 0;
-            }
-            else
-            {
-                _exactSpeed = searchDir * searchSpeedParam * speedMultiplier;
-                _exactPosition += _exactSpeed * dtSeconds;
-                if (_autoTriggerStrokeLimits)
-                {
-                    int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
-                    int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
-                    if (searchRightSwitch && _exactPosition >= effectiveMax)
-                        _exactPosition = effectiveMax;
-                    else if (!searchRightSwitch && _exactPosition <= effectiveMin)
-                        _exactPosition = effectiveMin;
-                }
+                if (_exactPosition > effectiveMax) _exactPosition = effectiveMax;
+                else if (_exactPosition < effectiveMin) _exactPosition = effectiveMin;
             }
         }
-        else if (_rfsState == 2)
+
+        void CompleteHoming(int calibratedPos)
         {
-            // Phase 2: Move slowly in opposite direction until switch is released, then zero position
-            if (!targetSwitchActive)
-            {
-                // Reference point calibrated! Set ActualPosition (#1) and TargetPosition (#0) to 0
-                _params[TmclAxisParam.LastReferencePosition] = (int)Math.Round(_exactPosition);
-                _exactPosition = 0;
-                _exactSpeed = 0;
-                _params[TmclAxisParam.ActualPosition] = 0;
-                _params[TmclAxisParam.TargetPosition] = 0;
-                _params[TmclAxisParam.EncoderPosition] = 0;
-                _params[TmclAxisParam.ActualSpeed] = 0;
-                _params[TmclAxisParam.TargetSpeed] = 0;
-                _rfsState = 0; // Homing complete!
-            }
-            else
-            {
-                _exactSpeed = -searchDir * switchSpeedParam * speedMultiplier;
-                _exactPosition += _exactSpeed * dtSeconds;
-            }
+            _params[TmclAxisParam.LastReferencePosition] = calibratedPos;
+            _exactPosition = 0;
+            _exactSpeed = 0;
+            _params[TmclAxisParam.ActualPosition] = 0;
+            _params[TmclAxisParam.TargetPosition] = 0;
+            _params[TmclAxisParam.ActualSpeed] = 0;
+            _params[TmclAxisParam.TargetSpeed] = 0;
+            _params[TmclAxisParam.ActualAcceleration] = 0;
+            _params[TmclAxisParam.RampMode] = 0;
+            _params[TmclAxisParam.TargetPosReached] = 1;
+            _rfsState = 0;
+        }
+
+        switch (baseMode)
+        {
+            case 2: // Search opposite end switch, then primary end switch
+                if (_rfsState == 1)
+                {
+                    if (oppositeLimitHit)
+                    {
+                        _rfsFirstSwitchPos = (int)Math.Round(_exactPosition);
+                        _rfsState = 2;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(-primaryDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 2)
+                {
+                    if (primaryLimitHit)
+                    {
+                        _rfsState = 3;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(primaryDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 3)
+                {
+                    if (!primaryLimitHit)
+                    {
+                        int exitPos = (int)Math.Round(_exactPosition);
+                        _params[TmclAxisParam.EndSwitchDistance] = Math.Abs(exitPos - _rfsFirstSwitchPos);
+                        CompleteHoming(exitPos);
+                    }
+                    else
+                    {
+                        AdvancePosition(-primaryDir * switchSpeedParam * speedMultiplier);
+                    }
+                }
+                break;
+
+            case 3: // Search opposite end switch, then primary end switch from both sides
+                if (_rfsState == 1)
+                {
+                    if (oppositeLimitHit)
+                    {
+                        _rfsFirstSwitchPos = (int)Math.Round(_exactPosition);
+                        _rfsState = 2;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(-primaryDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 2)
+                {
+                    if (primaryLimitHit)
+                    {
+                        _rfsSwitchEnterPos = (int)Math.Round(_exactPosition);
+                        _rfsState = 3;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(primaryDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 3)
+                {
+                    if (!primaryLimitHit)
+                    {
+                        int exitPos = (int)Math.Round(_exactPosition);
+                        int centerPos = (_rfsSwitchEnterPos + exitPos) / 2;
+                        _params[TmclAxisParam.EndSwitchDistance] = Math.Abs(centerPos - _rfsFirstSwitchPos);
+                        CompleteHoming(centerPos);
+                    }
+                    else
+                    {
+                        AdvancePosition(-primaryDir * switchSpeedParam * speedMultiplier);
+                    }
+                }
+                break;
+
+            case 4: // Search primary end switch from both sides
+                if (_rfsState == 1)
+                {
+                    if (primaryLimitHit)
+                    {
+                        _rfsSwitchEnterPos = (int)Math.Round(_exactPosition);
+                        _rfsState = 3;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(primaryDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 3)
+                {
+                    if (!primaryLimitHit)
+                    {
+                        int exitPos = (int)Math.Round(_exactPosition);
+                        CompleteHoming((_rfsSwitchEnterPos + exitPos) / 2);
+                    }
+                    else
+                    {
+                        AdvancePosition(-primaryDir * switchSpeedParam * speedMultiplier);
+                    }
+                }
+                break;
+
+            case 5: // Search home switch negative, reverse at left limit
+            case 6: // Search home switch positive, reverse at right limit
+                if (_rfsState == 1)
+                {
+                    if (homeActive)
+                    {
+                        _rfsSwitchEnterPos = (int)Math.Round(_exactPosition);
+                        _rfsState = 3;
+                        _exactSpeed = 0;
+                    }
+                    else if ((_rfsSearchDir < 0 && leftHit) || (_rfsSearchDir > 0 && rightHit))
+                    {
+                        _rfsSearchDir = -_rfsSearchDir;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(_rfsSearchDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 3)
+                {
+                    if (!homeActive)
+                    {
+                        int exitPos = (int)Math.Round(_exactPosition);
+                        CompleteHoming((_rfsSwitchEnterPos + exitPos) / 2);
+                    }
+                    else
+                    {
+                        AdvancePosition(-_rfsSearchDir * switchSpeedParam * speedMultiplier);
+                    }
+                }
+                break;
+
+            case 7: // Search home switch negative, ignore end switches
+            case 8: // Search home switch positive, ignore end switches
+                if (_rfsState == 1)
+                {
+                    if (homeActive)
+                    {
+                        _rfsSwitchEnterPos = (int)Math.Round(_exactPosition);
+                        _rfsState = 3;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(_rfsSearchDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 3)
+                {
+                    if (!homeActive)
+                    {
+                        int exitPos = (int)Math.Round(_exactPosition);
+                        CompleteHoming((_rfsSwitchEnterPos + exitPos) / 2);
+                    }
+                    else
+                    {
+                        AdvancePosition(-_rfsSearchDir * switchSpeedParam * speedMultiplier);
+                    }
+                }
+                break;
+
+            default: // Mode 1 / 65: Search primary end switch only
+                if (_rfsState == 1)
+                {
+                    if (primaryLimitHit)
+                    {
+                        _rfsState = 3;
+                        _exactSpeed = 0;
+                    }
+                    else
+                    {
+                        AdvancePosition(primaryDir * searchSpeedParam * speedMultiplier);
+                    }
+                }
+                else if (_rfsState == 3)
+                {
+                    if (!primaryLimitHit)
+                    {
+                        CompleteHoming((int)Math.Round(_exactPosition));
+                    }
+                    else
+                    {
+                        AdvancePosition(-primaryDir * switchSpeedParam * speedMultiplier);
+                    }
+                }
+                break;
         }
 
         _params[TmclAxisParam.ActualPosition] = (int)Math.Round(_exactPosition);
@@ -673,11 +1094,18 @@ public class AxisState : IMotionAxis
 
         _params[TmclAxisParam.RightLimitSwitchStatus] = rightActive ? 1 : 0;
         _params[TmclAxisParam.LeftLimitSwitchStatus] = leftActive ? 1 : 0;
-        _params[TmclAxisParam.RefSwitchStatus] = refActive ? 1 : 0;
+        _params[TmclAxisParam.HomeSwitchState] = refActive ? 1 : 0;
 
         bool isStopped = Math.Abs(_exactSpeed) < 0.05 && _rfsState == 0;
         bool posReached = isStopped && (_params[TmclAxisParam.RampMode] == 0) && (pos == target);
         _params[TmclAxisParam.TargetPosReached] = posReached ? 1 : 0;
+
+        int rawCurrent = isStopped
+            ? _params[TmclAxisParam.StandbyCurrent]
+            : (_params[TmclAxisParam.ActualAcceleration] != 0 && _params[TmclAxisParam.BoostCurrent] > 0
+                ? _params[TmclAxisParam.BoostCurrent]
+                : _params[TmclAxisParam.AbsoluteMaxCurrent]);
+        _params[TmclAxisParam.SmartEnergyActualCurrent] = Math.Clamp(rawCurrent / 8, 0, 31);
 
         // Update dynamic load value (#206) and TMC262 standstill flag (#208) when no alarm is latched
         if (!_manualAlarmLatched)

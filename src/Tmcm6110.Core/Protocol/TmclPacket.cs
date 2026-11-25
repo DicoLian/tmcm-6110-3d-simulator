@@ -97,12 +97,29 @@ public readonly struct TmclCommandPacket
             },
             TmclCommand.SIO => $"SIO Port#{TypeNumber}, Bank {MotorOrBank}, Val={Value}",
             TmclCommand.GIO => $"GIO Port#{TypeNumber}, Bank {MotorOrBank}",
-            TmclCommand.SCO => $"SCO Coord#{TypeNumber}, {axisLabel}, Pos={Value}",
-            TmclCommand.GCO => $"GCO Coord#{TypeNumber}, {axisLabel}",
+            TmclCommand.SCO => MotorOrBank == 255
+                ? $"SCO Coord#{TypeNumber}, 255 (RAM->EEPROM)"
+                : $"SCO Coord#{TypeNumber}, {axisLabel}, Pos={Value}",
+            TmclCommand.GCO => MotorOrBank == 255
+                ? $"GCO Coord#{TypeNumber}, 255 (EEPROM->RAM)"
+                : $"GCO Coord#{TypeNumber}, {axisLabel}",
             TmclCommand.CCO => $"CCO Coord#{TypeNumber}, {axisLabel}",
-            TmclCommand.CLE => $"CLE (Clear Error Flags), Mask={Value}",
+            TmclCommand.ACO => $"ACO Coord#{TypeNumber}, {axisLabel}",
+            TmclCommand.CLE => TypeNumber switch
+            {
+                0 => "CLE ALL (Clear All Error Flags)",
+                1 => "CLE ETO (Clear Timeout Flag)",
+                2 => "CLE EAL (Clear External Alarm Flag)",
+                3 => "CLE EDV (Clear Deviation Flag)",
+                4 => "CLE EPO (Clear Position Flag)",
+                5 => "CLE ESD (Clear Shutdown Flag)",
+                _ => $"CLE Type={TypeNumber}"
+            },
+            TmclCommand.GetAppStatus => $"GetAppStatus (135), Type={TypeNumber}",
             TmclCommand.GetFirmwareVersion => $"GetFirmwareVersion (136), Type={TypeNumber}",
-            TmclCommand.RequestTargetPositionReachedEvent => $"ReqPosReachedEvent (138), AxisMask=0x{Value:X2}",
+            TmclCommand.RestoreFactorySettings => $"RestoreFactorySettings (137), Magic={Value}",
+            TmclCommand.RequestTargetPositionReachedEvent => $"ReqPosReachedEvent (138), Type={TypeNumber} ({(TypeNumber == 1 ? "EveryMVP" : "NextMVP")}), AxisMask=0x{Value:X2}",
+            TmclCommand.SoftwareReset => $"SoftwareReset (255), Magic={Value}",
             _ => $"Cmd#{Command} ({CommandEnum}), Type={TypeNumber}, Mot/Bank={MotorOrBank}, Val={Value}"
         };
     }
