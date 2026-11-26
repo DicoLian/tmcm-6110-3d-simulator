@@ -23,6 +23,41 @@ public record PacketLogEntry(
     string ReplySummary
 );
 
+public sealed class StandaloneProgramRow : INotifyPropertyChanged
+{
+    private bool _isCurrentPc;
+
+    public int Address { get; }
+    public string AddressFormatted { get; }
+    public string Hex7 { get; }
+    public string Mnemonic { get; }
+
+    public bool IsCurrentPc
+    {
+        get => _isCurrentPc;
+        set
+        {
+            if (_isCurrentPc == value) return;
+            _isCurrentPc = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCurrentPc)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PcMarker)));
+        }
+    }
+
+    public string PcMarker => _isCurrentPc ? "▶" : string.Empty;
+
+    public StandaloneProgramRow(int address, string hex7, string mnemonic, bool isCurrentPc)
+    {
+        Address = address;
+        AddressFormatted = $"{address:D4}";
+        Hex7 = hex7;
+        Mnemonic = mnemonic;
+        _isCurrentPc = isCurrentPc;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
 /// <summary>
 /// Master ViewModel coordinating the TMCM-6110 Simulator Engine, Serial Port Server,
 /// 3-Axis (Axis 0=Z, Axis 1=Y, Axis 2=X) ViewModels, and Binary Packet Sniffer Log.
@@ -44,6 +79,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<string> AvailableComPorts { get; } = new();
     public ObservableCollection<int> AvailableBaudRates { get; } = new() { 9600, 14400, 19200, 28800, 38400, 57600, 115200, 230400 };
     public ObservableCollection<PacketLogEntry> PacketLogs { get; } = new();
+    public ObservableCollection<StandaloneProgramRow> StandaloneProgramLines { get; } = new();
 
     private enum ConnectionStateKind { Disconnected, Connected, Error }
     private enum ConfigSourceKind { BuiltInDefault, AutoIni, ManualIni, ManualTmc, ManualMapping, AutoLoadFallback }
@@ -75,6 +111,37 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _legendLine4 = string.Empty;
     private bool _isSwappingRoles;
     private bool _isUpdatingSceneOptions;
+
+    // Standalone VM monitor & debugger state (cached to minimize 60 FPS allocations and PropertyChanged churn)
+    private string _vmStatusText = "STOP";
+    private string _vmStatusColor = "#455A64";
+    private string _vmWaitText = "-";
+    private string _vmIrqText = "IRQ OFF";
+    private string _vmIrqColor = "#2B3240";
+    private int _vmProgramCounter;
+    private int _vmInstructionCount;
+    private int _vmAccumulator;
+    private int _vmXRegister;
+    private string _vmStackDisplay = "0 / 8";
+    private string _vmErrorFlagsText = "0x00";
+    private string _vmCodeProtection = "0 (Off)";
+    private long _vmExecutedCount;
+    private bool _vmAutoStartEnabled;
+    private string _vmProgramSummary = string.Empty;
+    private long _lastDisassemblyRevision = -1;
+    private int _lastDisassemblyPc = -1;
+    private int _lastVmStackDepth = -1;
+    private int _lastVmErrorFlags = -1;
+    private int _lastVmCodeProtectionMode = -1;
+    private int _lastVmActiveIrq = int.MinValue;
+    private bool _lastVmIsInInterrupt;
+    private bool _lastVmGlobalIrqEnabled;
+    private string _lastDownloadedFileName = string.Empty;
+    private long _lastDownloadedUiRevision = -1;
+    private long _lastSummaryRevision = -1;
+    private int _lastSummaryInstructionCount = -1;
+    private bool _lastSummaryDownloadMode;
+    private bool? _lastSummaryLangIsEn;
 
     public event Action<MachineSceneMode>? SceneModeChanged;
     public event Action? AxisMappingChanged;
@@ -349,6 +416,108 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    public string VmStatusText
+    {
+        get => _vmStatusText;
+        private set => SetField(ref _vmStatusText, value);
+    }
+
+    public string VmStatusColor
+    {
+        get => _vmStatusColor;
+        private set => SetField(ref _vmStatusColor, value);
+    }
+
+    public string VmWaitText
+    {
+        get => _vmWaitText;
+        private set => SetField(ref _vmWaitText, value);
+    }
+
+    public string VmIrqText
+    {
+        get => _vmIrqText;
+        private set => SetField(ref _vmIrqText, value);
+    }
+
+    public string VmIrqColor
+    {
+        get => _vmIrqColor;
+        private set => SetField(ref _vmIrqColor, value);
+    }
+
+    public int VmProgramCounter
+    {
+        get => _vmProgramCounter;
+        private set => SetField(ref _vmProgramCounter, value);
+    }
+
+    public int VmInstructionCount
+    {
+        get => _vmInstructionCount;
+        private set => SetField(ref _vmInstructionCount, value);
+    }
+
+    public int VmAccumulator
+    {
+        get => _vmAccumulator;
+        private set => SetField(ref _vmAccumulator, value);
+    }
+
+    public int VmXRegister
+    {
+        get => _vmXRegister;
+        private set => SetField(ref _vmXRegister, value);
+    }
+
+    public string VmStackDisplay
+    {
+        get => _vmStackDisplay;
+        private set => SetField(ref _vmStackDisplay, value);
+    }
+
+    public string VmErrorFlagsText
+    {
+        get => _vmErrorFlagsText;
+        private set => SetField(ref _vmErrorFlagsText, value);
+    }
+
+    public string VmCodeProtection
+    {
+        get => _vmCodeProtection;
+        private set => SetField(ref _vmCodeProtection, value);
+    }
+
+    public long VmExecutedCount
+    {
+        get => _vmExecutedCount;
+        private set => SetField(ref _vmExecutedCount, value);
+    }
+
+    public bool VmAutoStartEnabled
+    {
+        get => _vmAutoStartEnabled;
+        set
+        {
+            if (_vmAutoStartEnabled == value) return;
+            _vmAutoStartEnabled = value;
+            OnPropertyChanged();
+            Controller.ProcessCommand(new TmclCommandPacket(
+                ModuleAddress,
+                (byte)TmclCommand.SGP,
+                77,
+                0,
+                value ? 1 : 0));
+            RefreshStandaloneVmState();
+        }
+    }
+
+    public string VmProgramSummary
+    {
+        get => _vmProgramSummary;
+        private set => SetField(ref _vmProgramSummary, value);
+    }
+
     public MainViewModel()
     {
         Controller = new Tmcm6110Controller();
@@ -382,6 +551,7 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         // Also start local TCP Server on Port 4001 for convenient zero-driver testing
         SerialServer.StartTcpServer(4001);
         RefreshLocalizedTexts();
+        RefreshStandaloneVmState();
     }
 
     public void RefreshComPorts()
@@ -748,6 +918,8 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
                 }
             };
         }
+
+        _lastDisassemblyRevision = -1;
     }
 
     private void TrySyncRolesFromLoadedAxisLabels()
@@ -879,6 +1051,11 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshLegendTexts();
         foreach (var vm in AllAxes)
             vm.UpdateAxisTitle(_selectedSceneMode);
+
+        _lastVmCodeProtectionMode = -1;
+        _lastSummaryLangIsEn = null;
+        _lastDisassemblyRevision = -1;
+        RefreshStandaloneVmState();
     }
 
     private void RefreshOptionLabels()
@@ -1258,6 +1435,346 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public void ClearAllAlarms()
     {
         Controller.ClearAllFaults();
+    }
+
+    // ==================== STANDALONE VM MONITOR, DOWNLOAD & DEBUGGER ====================
+    public void RefreshStandaloneVmState()
+    {
+        StandaloneVmSnapshot snap = Controller.GetStandaloneSnapshot();
+        long revision = Controller.ProgramRevision;
+
+        (string statusText, string statusColor) = ResolveVmStatusBadge(snap);
+        VmStatusText = statusText;
+        VmStatusColor = statusColor;
+
+        VmWaitText = snap.IsWaiting && !string.IsNullOrEmpty(snap.WaitDescription)
+            ? $"WAIT {snap.WaitDescription}"
+            : "-";
+
+        if (snap.IsInInterrupt != _lastVmIsInInterrupt ||
+            snap.ActiveInterruptNumber != _lastVmActiveIrq ||
+            snap.GlobalInterruptsEnabled != _lastVmGlobalIrqEnabled)
+        {
+            _lastVmIsInInterrupt = snap.IsInInterrupt;
+            _lastVmActiveIrq = snap.ActiveInterruptNumber;
+            _lastVmGlobalIrqEnabled = snap.GlobalInterruptsEnabled;
+            (string irqText, string irqColor) = ResolveVmIrqBadge(snap);
+            VmIrqText = irqText;
+            VmIrqColor = irqColor;
+        }
+
+        VmProgramCounter = snap.ProgramCounter;
+        VmInstructionCount = snap.InstructionCount;
+        VmAccumulator = snap.Accumulator;
+        VmXRegister = snap.XRegister;
+        VmExecutedCount = snap.ExecutedInstructionCount;
+
+        if (snap.CallStackDepth != _lastVmStackDepth)
+        {
+            _lastVmStackDepth = snap.CallStackDepth;
+            VmStackDisplay = $"{snap.CallStackDepth} / 8";
+        }
+
+        if (snap.ErrorFlags != _lastVmErrorFlags)
+        {
+            _lastVmErrorFlags = snap.ErrorFlags;
+            VmErrorFlagsText = FormatVmErrorFlags(snap.ErrorFlags);
+        }
+
+        if (snap.CodeProtectionMode != _lastVmCodeProtectionMode)
+        {
+            _lastVmCodeProtectionMode = snap.CodeProtectionMode;
+            VmCodeProtection = FormatCodeProtectionMode(snap.CodeProtectionMode);
+        }
+
+        SetField(ref _vmAutoStartEnabled, snap.AutoStartEnabled, nameof(VmAutoStartEnabled));
+
+        if (!snap.IsDownloadMode && snap.InstructionCount == 0 && !string.IsNullOrEmpty(_lastDownloadedFileName))
+        {
+            _lastDownloadedFileName = string.Empty;
+            _lastDownloadedUiRevision = -1;
+        }
+
+        bool isEn = LanguageManager.IsEnglish;
+        if (revision != _lastSummaryRevision ||
+            snap.InstructionCount != _lastSummaryInstructionCount ||
+            snap.IsDownloadMode != _lastSummaryDownloadMode ||
+            _lastSummaryLangIsEn != isEn)
+        {
+            _lastSummaryRevision = revision;
+            _lastSummaryInstructionCount = snap.InstructionCount;
+            _lastSummaryDownloadMode = snap.IsDownloadMode;
+            _lastSummaryLangIsEn = isEn;
+            VmProgramSummary = FormatVmProgramSummary(snap, revision);
+        }
+
+        SyncStandaloneDisassembly(snap, revision);
+    }
+
+    public void DownloadTmclProgram(string filePath)
+    {
+        try
+        {
+            string source = File.ReadAllText(filePath);
+            TmclAssemblyResult assembly = TmclAssembler.Assemble(source, ModuleAddress);
+            if (!assembly.Success)
+            {
+                const int maxErrorsToShow = 15;
+                string details = string.Join(Environment.NewLine, assembly.Errors.Take(maxErrorsToShow));
+                if (assembly.Errors.Count > maxErrorsToShow)
+                {
+                    details += Environment.NewLine + LanguageManager.Get(
+                        $"... 以及另外 {assembly.Errors.Count - maxErrorsToShow} 個錯誤",
+                        $"... and {assembly.Errors.Count - maxErrorsToShow} more error(s)");
+                }
+
+                MessageBox.Show(
+                    LanguageManager.Get(
+                        $"TMCL 組譯失敗 ({assembly.Errors.Count} 個錯誤)：\n\n{details}",
+                        $"TMCL assembly failed ({assembly.Errors.Count} error(s)):\n\n{details}"),
+                    LanguageManager.Get("TMCL 組譯錯誤", "TMCL Assembly Error"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            byte modAddr = ModuleAddress;
+
+            // Exact TMCL-IDE wire sequence routed through Controller.ProcessCommand so Packet Sniffer logs every frame:
+            // 1. Cmd 128 (StopApplication)
+            Controller.ProcessCommand(new TmclCommandPacket(modAddr, (byte)TmclCommand.StopApplication, 0, 0, 0));
+
+            // 2. Cmd 132 (StartDownload, val=0)
+            TmclReplyPacket startReply = Controller.ProcessCommand(
+                new TmclCommandPacket(modAddr, (byte)TmclCommand.StartDownload, 0, 0, 0));
+            if (startReply.StatusEnum != TmclStatus.SuccessOk)
+            {
+                MessageBox.Show(
+                    LanguageManager.Get(
+                        $"無法啟動程式下載（狀態碼: {startReply.Status} - {startReply.StatusEnum}）。\n請檢查 Global Parameter #81 程式碼保護設定。",
+                        $"Cannot start program download (Status: {startReply.Status} - {startReply.StatusEnum}).\nCheck Global Parameter #81 code protection."),
+                    LanguageManager.Get("下載被拒", "Download Rejected"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                RefreshStandaloneVmState();
+                return;
+            }
+
+            // 3. Every assembled instruction packet (expects Status = 101 / CommandLoadedIntoEeprom)
+            foreach (TmclCommandPacket pkt in assembly.Packets)
+            {
+                TmclReplyPacket writeReply = Controller.ProcessCommand(pkt);
+                if (writeReply.StatusEnum != TmclStatus.CommandLoadedIntoEeprom)
+                {
+                    Controller.ProcessCommand(new TmclCommandPacket(modAddr, (byte)TmclCommand.QuitDownload, 0, 0, 0));
+                    MessageBox.Show(
+                        LanguageManager.Get(
+                            $"寫入指令至 EEPROM 失敗（狀態碼: {writeReply.Status} - {writeReply.StatusEnum}）。",
+                            $"Failed writing instruction to EEPROM (Status: {writeReply.Status} - {writeReply.StatusEnum})."),
+                        LanguageManager.Get("下載失敗", "Download Failed"),
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    RefreshStandaloneVmState();
+                    return;
+                }
+            }
+
+            // 4. End-marker packet (0, 0, 0, 0) (expects Status = 101)
+            TmclReplyPacket endReply = Controller.ProcessCommand(new TmclCommandPacket(modAddr, 0, 0, 0, 0));
+            if (endReply.StatusEnum != TmclStatus.CommandLoadedIntoEeprom)
+            {
+                Controller.ProcessCommand(new TmclCommandPacket(modAddr, (byte)TmclCommand.QuitDownload, 0, 0, 0));
+                MessageBox.Show(
+                    LanguageManager.Get(
+                        $"寫入程式結束標記失敗（狀態碼: {endReply.Status} - {endReply.StatusEnum}）。",
+                        $"Failed writing end-marker packet (Status: {endReply.Status} - {endReply.StatusEnum})."),
+                    LanguageManager.Get("下載失敗", "Download Failed"),
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                RefreshStandaloneVmState();
+                return;
+            }
+
+            // 5. Cmd 133 (QuitDownload)
+            Controller.ProcessCommand(new TmclCommandPacket(modAddr, (byte)TmclCommand.QuitDownload, 0, 0, 0));
+
+            _lastDownloadedFileName = Path.GetFileName(filePath);
+            _lastDownloadedUiRevision = Controller.ProgramRevision;
+            RefreshStandaloneVmState();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                LanguageManager.Get($"讀取或下載 .tmc 檔案失敗：\n{ex.Message}", $"Failed to load or download .tmc file:\n{ex.Message}"),
+                LanguageManager.Get("載入錯誤", "Load Error"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    public void RunStandaloneProgram()
+    {
+        StandaloneVmSnapshot snap = Controller.GetStandaloneSnapshot();
+        byte runType = (snap.Status == TmclAppStatus.Reset ||
+            (snap.ProgramCounter >= snap.InstructionCount && snap.InstructionCount > 0))
+            ? (byte)1
+            : (byte)0;
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RunApplication, runType, 0, 0));
+        RefreshStandaloneVmState();
+    }
+
+    public void StepStandaloneProgram()
+    {
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.StepApplication, 0, 0, 0));
+        RefreshStandaloneVmState();
+    }
+
+    public void StopStandaloneProgram()
+    {
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.StopApplication, 0, 0, 0));
+        RefreshStandaloneVmState();
+    }
+
+    public void ResetStandaloneProgram()
+    {
+        Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.ResetApplication, 0, 0, 0));
+        RefreshStandaloneVmState();
+    }
+
+    public void ClearStandaloneProgramMemory()
+    {
+        Controller.ClearProgramMemory();
+        _lastDownloadedFileName = string.Empty;
+        _lastDownloadedUiRevision = -1;
+        RefreshStandaloneVmState();
+    }
+
+    private void SyncStandaloneDisassembly(StandaloneVmSnapshot snap, long revision)
+    {
+        if (revision != _lastDisassemblyRevision)
+        {
+            IReadOnlyList<TmclProgramLine> lines = Controller.GetDisassembledProgram();
+            StandaloneProgramLines.Clear();
+            for (int i = 0; i < lines.Count; i++)
+            {
+                TmclProgramLine line = lines[i];
+                StandaloneProgramLines.Add(new StandaloneProgramRow(
+                    line.Address,
+                    line.Hex7,
+                    line.Mnemonic,
+                    line.IsCurrentPc));
+            }
+
+            _lastDisassemblyRevision = revision;
+            _lastDisassemblyPc = snap.ProgramCounter;
+            return;
+        }
+
+        if (snap.ProgramCounter != _lastDisassemblyPc)
+        {
+            if (_lastDisassemblyPc >= 0 &&
+                _lastDisassemblyPc < StandaloneProgramLines.Count &&
+                StandaloneProgramLines[_lastDisassemblyPc].Address == _lastDisassemblyPc)
+            {
+                StandaloneProgramLines[_lastDisassemblyPc].IsCurrentPc = false;
+            }
+
+            if (snap.ProgramCounter >= 0 &&
+                snap.ProgramCounter < StandaloneProgramLines.Count &&
+                StandaloneProgramLines[snap.ProgramCounter].Address == snap.ProgramCounter)
+            {
+                StandaloneProgramLines[snap.ProgramCounter].IsCurrentPc = true;
+            }
+
+            _lastDisassemblyPc = snap.ProgramCounter;
+        }
+    }
+
+    private static (string Text, string Color) ResolveVmStatusBadge(StandaloneVmSnapshot snap)
+    {
+        if (snap.IsDownloadMode)
+            return ("DOWNLOAD", "#1565C0");
+
+        return snap.Status switch
+        {
+            TmclAppStatus.Run => snap.IsWaiting ? ("WAIT", "#EF6C00") : ("RUN", "#2E7D32"),
+            TmclAppStatus.Step => ("STEP", "#00838F"),
+            TmclAppStatus.Reset => ("RESET", "#455A64"),
+            _ => ("STOP", "#455A64")
+        };
+    }
+
+    private static (string Text, string Color) ResolveVmIrqBadge(StandaloneVmSnapshot snap)
+    {
+        if (snap.IsInInterrupt)
+            return ($"IRQ #{snap.ActiveInterruptNumber} ACTIVE", "#D84315");
+
+        return snap.GlobalInterruptsEnabled
+            ? ("IRQ ON", "#1B5E20")
+            : ("IRQ OFF", "#2B3240");
+    }
+
+    private static string FormatVmErrorFlags(int flags)
+    {
+        if (flags == 0)
+            return "0x00";
+
+        var names = new List<string>(5);
+        if ((flags & (1 << 0)) != 0) names.Add("ETO");
+        if ((flags & (1 << 1)) != 0) names.Add("EAL");
+        if ((flags & (1 << 2)) != 0) names.Add("EDV");
+        if ((flags & (1 << 3)) != 0) names.Add("EPO");
+        if ((flags & (1 << 4)) != 0) names.Add("ESD");
+        return names.Count > 0
+            ? $"{string.Join("|", names)} (0x{flags:X2})"
+            : $"0x{flags:X2}";
+    }
+
+    private static string FormatCodeProtectionMode(int mode) => mode switch
+    {
+        0 => LanguageManager.Get("0 (無保護)", "0 (Off)"),
+        1 => LanguageManager.Get("1 (禁止讀取)", "1 (Read Lock)"),
+        2 => LanguageManager.Get("2 (禁止寫入)", "2 (Write Lock)"),
+        3 => LanguageManager.Get("3 (完全鎖定)", "3 (Full Lock)"),
+        _ => mode.ToString()
+    };
+
+    private string FormatVmProgramSummary(StandaloneVmSnapshot snap, long revision)
+    {
+        if (snap.IsDownloadMode)
+        {
+            return LanguageManager.Get(
+                $"下載模式中 (WritePtr={snap.WritePointer})",
+                $"Download mode active (WritePtr={snap.WritePointer})");
+        }
+
+        if (snap.InstructionCount == 0)
+        {
+            return LanguageManager.Get(
+                "尚未載入 Standalone 程式 (EEPROM 為空)",
+                "No Standalone program loaded (EEPROM empty)");
+        }
+
+        if (!string.IsNullOrEmpty(_lastDownloadedFileName) && revision == _lastDownloadedUiRevision)
+        {
+            return LanguageManager.Get(
+                $"已下載: {_lastDownloadedFileName} ({snap.InstructionCount} 條指令)",
+                $"Downloaded: {_lastDownloadedFileName} ({snap.InstructionCount} instructions)");
+        }
+
+        return LanguageManager.Get(
+            $"已載入 EEPROM 程式 ({snap.InstructionCount} 條指令)",
+            $"EEPROM program loaded ({snap.InstructionCount} instructions)");
+    }
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+            return false;
+
+        field = value;
+        OnPropertyChanged(propertyName);
+        return true;
     }
 
     private void OnProtocolTraceGenerated(ProtocolTraceEvent trace)

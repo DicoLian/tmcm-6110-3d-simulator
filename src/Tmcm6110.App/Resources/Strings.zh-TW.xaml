@@ -92,4 +92,38 @@
     <sys:String x:Key="ColTxHex">模擬器回覆 9-Byte TX (Hex)</sys:String>
     <sys:String x:Key="ColReplySummary">回覆狀態與數值解析</sys:String>
 
+    <sys:String x:Key="TabStandaloneVm">TMCL 程式 / Standalone VM</sys:String>
+    <sys:String x:Key="GrpVmStatus">Standalone VM 狀態與暫存器</sys:String>
+    <sys:String x:Key="LblVmStatus">VM 狀態:</sys:String>
+    <sys:String x:Key="LblVmWait">等待狀態:</sys:String>
+    <sys:String x:Key="LblVmIrq">中斷狀態:</sys:String>
+    <sys:String x:Key="LblVmPc">PC (程式計數器)</sys:String>
+    <sys:String x:Key="LblVmInstructions">指令數 (Instructions)</sys:String>
+    <sys:String x:Key="LblVmAccu">Accu (累加器)</sys:String>
+    <sys:String x:Key="LblVmXReg">X Reg (索引暫存器)</sys:String>
+    <sys:String x:Key="LblVmStack">Stack (堆疊)</sys:String>
+    <sys:String x:Key="LblVmErrFlags">ErrFlags (錯誤旗標)</sys:String>
+    <sys:String x:Key="LblVmCodeProt">Prot (#81 保護)</sys:String>
+    <sys:String x:Key="LblVmExecuted">Executed (已執行)</sys:String>
+    <sys:String x:Key="GrpVmControls">程式下載與執行控制 (TMCL-IDE Protocol)</sys:String>
+    <sys:String x:Key="BtnLoadDownloadTmc">載入並下載 (.tmc)</sys:String>
+    <sys:String x:Key="TipLoadDownloadTmc">組譯 .tmc 程式並依 Cmd 128 -> 132 -> 指令封包 -> 0 -> 133 序列寫入 EEPROM</sys:String>
+    <sys:String x:Key="BtnVmRun">▶ Run (129)</sys:String>
+    <sys:String x:Key="TipVmRun">執行 Standalone 程式 (Reset 或程式結尾時從 Addr 0 啟動，否則繼續執行)</sys:String>
+    <sys:String x:Key="BtnVmStep">⏭ Step (130)</sys:String>
+    <sys:String x:Key="TipVmStep">單步執行下一條 Standalone 指令</sys:String>
+    <sys:String x:Key="BtnVmStop">■ Stop (128)</sys:String>
+    <sys:String x:Key="TipVmStop">暫停 Standalone 程式執行</sys:String>
+    <sys:String x:Key="BtnVmReset">↺ Reset (131)</sys:String>
+    <sys:String x:Key="TipVmReset">重置 Standalone VM (PC=0, Accu=0, X=0, 旗標與中斷歸零)</sys:String>
+    <sys:String x:Key="BtnVmClearEeprom">清除 EEPROM</sys:String>
+    <sys:String x:Key="TipVmClearEeprom">清空已下載的 EEPROM Standalone 程式記憶體</sys:String>
+    <sys:String x:Key="ChkVmAutoStart">開機自動執行 AutoStart (#77)</sys:String>
+    <sys:String x:Key="TipVmAutoStart">設定 Global Parameter #77：軟體重啟 (Cmd 255) 後自動從 Addr 0 執行程式</sys:String>
+    <sys:String x:Key="GrpVmDisassembly">EEPROM 程式記憶體反組譯 (Program Memory Disassembly)</sys:String>
+    <sys:String x:Key="ColVmPc">PC</sys:String>
+    <sys:String x:Key="ColVmAddr">位址</sys:String>
+    <sys:String x:Key="ColVmHex7">Hex (7B)</sys:String>
+    <sys:String x:Key="ColVmMnemonic">TMCL 反組譯指令 (Mnemonic)</sys:String>
+
 </ResourceDictionary>

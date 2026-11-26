@@ -90,6 +90,7 @@ public partial class MainWindow : Window
         }
 
         _sceneBuilder.UpdateScene(_frameBuffer.AsSpan(0, _viewModel.SelectedAxisCount));
+        _viewModel.RefreshStandaloneVmState();
 
         string coordPrefix = LanguageManager.IsEnglish ? "Coord:" : "座標:";
         Txt3DCoordOverlay.Text = _viewModel.SelectedSceneMode switch
@@ -301,6 +302,49 @@ public partial class MainWindow : Window
     private void BtnMappingDefaultZyx_Click(object sender, RoutedEventArgs e) => _viewModel.ResetDefaultAxisMapping();
 
     private void BtnMappingStandardXyz_Click(object sender, RoutedEventArgs e) => _viewModel.ApplyStandardXyzMapping();
+
+    // ==================== TAB 3: STANDALONE VM / PROGRAM DOWNLOAD HANDLERS ====================
+    private void BtnVmLoadDownload_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = LanguageManager.Get(
+                "選擇要組譯並下載的 TMCL 程式檔 (.tmc)",
+                "Select TMCL Program File (.tmc) to Assemble & Download"),
+            Filter = LanguageManager.Get(
+                "TMCL 程式檔 (*.tmc)|*.tmc|所有檔案 (*.*)|*.*",
+                "TMCL Program Files (*.tmc)|*.tmc|All Files (*.*)|*.*"),
+            InitialDirectory = ResolveInitialTmcDirectory()
+        };
+
+        if (dlg.ShowDialog() == true)
+        {
+            _viewModel.DownloadTmclProgram(dlg.FileName);
+        }
+    }
+
+    private static string ResolveInitialTmcDirectory()
+    {
+        var dir = new System.IO.DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        for (int i = 0; i < 6 && dir != null; i++)
+        {
+            string samplesDir = System.IO.Path.Combine(dir.FullName, "samples");
+            if (System.IO.Directory.Exists(samplesDir))
+                return samplesDir;
+            dir = dir.Parent;
+        }
+        return AppDomain.CurrentDomain.BaseDirectory;
+    }
+
+    private void BtnVmRun_Click(object sender, RoutedEventArgs e) => _viewModel.RunStandaloneProgram();
+
+    private void BtnVmStep_Click(object sender, RoutedEventArgs e) => _viewModel.StepStandaloneProgram();
+
+    private void BtnVmStop_Click(object sender, RoutedEventArgs e) => _viewModel.StopStandaloneProgram();
+
+    private void BtnVmReset_Click(object sender, RoutedEventArgs e) => _viewModel.ResetStandaloneProgram();
+
+    private void BtnVmClearEeprom_Click(object sender, RoutedEventArgs e) => _viewModel.ClearStandaloneProgramMemory();
 
     private void Window_Closed(object sender, EventArgs e)
     {

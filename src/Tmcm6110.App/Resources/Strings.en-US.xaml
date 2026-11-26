@@ -92,4 +92,38 @@
     <sys:String x:Key="ColTxHex">Sim Reply TX (9-Byte Hex)</sys:String>
     <sys:String x:Key="ColReplySummary">Reply Status &amp; Decoded Value</sys:String>
 
+    <sys:String x:Key="TabStandaloneVm">TMCL Program / VM</sys:String>
+    <sys:String x:Key="GrpVmStatus">Standalone VM Status &amp; Registers</sys:String>
+    <sys:String x:Key="LblVmStatus">VM Status:</sys:String>
+    <sys:String x:Key="LblVmWait">Wait State:</sys:String>
+    <sys:String x:Key="LblVmIrq">Interrupt:</sys:String>
+    <sys:String x:Key="LblVmPc">PC</sys:String>
+    <sys:String x:Key="LblVmInstructions">Instructions</sys:String>
+    <sys:String x:Key="LblVmAccu">Accu</sys:String>
+    <sys:String x:Key="LblVmXReg">X Reg</sys:String>
+    <sys:String x:Key="LblVmStack">Stack</sys:String>
+    <sys:String x:Key="LblVmErrFlags">ErrFlags</sys:String>
+    <sys:String x:Key="LblVmCodeProt">Prot (#81)</sys:String>
+    <sys:String x:Key="LblVmExecuted">Executed</sys:String>
+    <sys:String x:Key="GrpVmControls">Program Download &amp; Execution Controls</sys:String>
+    <sys:String x:Key="BtnLoadDownloadTmc">Load &amp; Download (.tmc)</sys:String>
+    <sys:String x:Key="TipLoadDownloadTmc">Assemble .tmc file and download via TMCL-IDE sequence (128 -&gt; 132 -&gt; packets -&gt; 0 -&gt; 133)</sys:String>
+    <sys:String x:Key="BtnVmRun">▶ Run (129)</sys:String>
+    <sys:String x:Key="TipVmRun">Run Standalone program (starts from Addr 0 when Reset or at end, otherwise resumes)</sys:String>
+    <sys:String x:Key="BtnVmStep">⏭ Step (130)</sys:String>
+    <sys:String x:Key="TipVmStep">Execute a single Standalone instruction</sys:String>
+    <sys:String x:Key="BtnVmStop">■ Stop (128)</sys:String>
+    <sys:String x:Key="TipVmStop">Stop Standalone program execution</sys:String>
+    <sys:String x:Key="BtnVmReset">↺ Reset (131)</sys:String>
+    <sys:String x:Key="TipVmReset">Reset Standalone VM (PC=0, Accu=0, X=0, clear flags &amp; interrupts)</sys:String>
+    <sys:String x:Key="BtnVmClearEeprom">Clear EEPROM</sys:String>
+    <sys:String x:Key="TipVmClearEeprom">Clear downloaded EEPROM Standalone program memory</sys:String>
+    <sys:String x:Key="ChkVmAutoStart">AutoStart (#77)</sys:String>
+    <sys:String x:Key="TipVmAutoStart">Set Global Parameter #77: auto-run downloaded program after Software Reset (Cmd 255)</sys:String>
+    <sys:String x:Key="GrpVmDisassembly">Program Memory Disassembly</sys:String>
+    <sys:String x:Key="ColVmPc">PC</sys:String>
+    <sys:String x:Key="ColVmAddr">Addr</sys:String>
+    <sys:String x:Key="ColVmHex7">Hex (7B)</sys:String>
+    <sys:String x:Key="ColVmMnemonic">TMCL Mnemonic</sys:String>
+
 </ResourceDictionary>

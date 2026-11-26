@@ -428,6 +428,172 @@
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
+
+                <!-- TAB 3: TMCL PROGRAM DOWNLOAD, STANDALONE VM MONITOR & DEBUGGER -->
+                <TabItem Header="{DynamicResource TabStandaloneVm}">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="2,4,6,4">
+                        <StackPanel>
+                            <!-- Card 1: VM Status & Registers -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource GrpVmStatus}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,8"/>
+
+                                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,14,2">
+                                            <TextBlock Text="{DynamicResource LblVmStatus}" Foreground="#9AA5B8" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                            <Border Background="{Binding VmStatusColor}" CornerRadius="4" Padding="9,3" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding VmStatusText}" FontFamily="Consolas" FontSize="11.5" FontWeight="Bold" Foreground="White"/>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,14,2">
+                                            <TextBlock Text="{DynamicResource LblVmWait}" Foreground="#9AA5B8" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                            <Border Background="#141820" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding VmWaitText}" FontFamily="Consolas" FontSize="11.5" Foreground="#FFB74D"/>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
+                                            <TextBlock Text="{DynamicResource LblVmIrq}" Foreground="#9AA5B8" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                            <Border Background="{Binding VmIrqColor}" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="4" Padding="8,2" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding VmIrqText}" FontFamily="Consolas" FontSize="11.5" FontWeight="Bold" Foreground="#ECF0F6"/>
+                                            </Border>
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <UniformGrid Columns="4">
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmPc}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmProgramCounter}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmInstructions}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmInstructionCount}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#00E676"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmAccu}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmAccumulator}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#FFD54F"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmXReg}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmXRegister}" FontFamily="Consolas" FontSize="13.5" FontWeight="Bold" Foreground="#81C784"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmStack}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmStackDisplay}" FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="#ECF0F6"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmErrFlags}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmErrorFlagsText}" FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="#FF8A80"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmCodeProt}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmCodeProtection}" FontFamily="Consolas" FontSize="12.5" FontWeight="Bold" Foreground="#FFB74D"/>
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="#141820" CornerRadius="4" Padding="6,4" Margin="2">
+                                            <StackPanel>
+                                                <TextBlock Text="{DynamicResource LblVmExecuted}" FontSize="10.5" Foreground="#9AA5B8"/>
+                                                <TextBlock Text="{Binding VmExecutedCount}" FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="#81D4FA"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </UniformGrid>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Card 2: Download & Execution Controls -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10" Margin="0,0,0,8">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource GrpVmControls}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,8"/>
+
+                                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                        <Button Content="{DynamicResource BtnLoadDownloadTmc}" ToolTip="{DynamicResource TipLoadDownloadTmc}" Click="BtnVmLoadDownload_Click" Background="#1565C0" BorderBrush="#42A5F5" Padding="10,4"/>
+                                        <Button Content="{DynamicResource BtnVmRun}" ToolTip="{DynamicResource TipVmRun}" Click="BtnVmRun_Click" Background="#2E7D32" BorderBrush="#66BB6A" Padding="10,4"/>
+                                        <Button Content="{DynamicResource BtnVmStep}" ToolTip="{DynamicResource TipVmStep}" Click="BtnVmStep_Click" Background="#00838F" BorderBrush="#26C6DA" Padding="10,4"/>
+                                        <Button Content="{DynamicResource BtnVmStop}" ToolTip="{DynamicResource TipVmStop}" Click="BtnVmStop_Click" Background="#8E2424" BorderBrush="#EF5350" Padding="10,4"/>
+                                        <Button Content="{DynamicResource BtnVmReset}" ToolTip="{DynamicResource TipVmReset}" Click="BtnVmReset_Click" Background="#455A64" BorderBrush="#78909C" Padding="10,4"/>
+                                        <Button Content="{DynamicResource BtnVmClearEeprom}" ToolTip="{DynamicResource TipVmClearEeprom}" Click="BtnVmClearEeprom_Click" Background="#4A148C" BorderBrush="#AB47BC" Padding="10,4"/>
+                                    </WrapPanel>
+
+                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <CheckBox Content="{DynamicResource ChkVmAutoStart}" IsChecked="{Binding VmAutoStartEnabled, Mode=TwoWay}" ToolTip="{DynamicResource TipVmAutoStart}" Foreground="#FFB74D" VerticalAlignment="Center" Margin="2,0,16,0"/>
+                                        <TextBlock Text="{Binding VmProgramSummary}" FontSize="12" Foreground="#9AA5B8" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Card 3: Program Memory Disassembly -->
+                            <Border Background="#1E2430" BorderBrush="#2F384A" BorderThickness="1" CornerRadius="6" Padding="12,10">
+                                <StackPanel>
+                                    <TextBlock Text="{DynamicResource GrpVmDisassembly}" FontSize="13.5" FontWeight="Bold" Foreground="#4FC3F7" Margin="0,0,0,8"/>
+
+                                    <DataGrid ItemsSource="{Binding StandaloneProgramLines}" AutoGenerateColumns="False" IsReadOnly="True"
+                                              CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False" SelectionMode="Single"
+                                              MinHeight="250" MaxHeight="440"
+                                              Background="#12161E" RowBackground="#161B24" AlternatingRowBackground="#1B222D"
+                                              Foreground="#ECF0F6" BorderBrush="#2F384A" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#262E3D"
+                                              HeadersVisibility="Column" FontFamily="Consolas" FontSize="12">
+                                        <DataGrid.Resources>
+                                            <Style TargetType="DataGridColumnHeader">
+                                                <Setter Property="Background" Value="#252D3D"/>
+                                                <Setter Property="Foreground" Value="#9AA5B8"/>
+                                                <Setter Property="Padding" Value="8,4"/>
+                                                <Setter Property="BorderBrush" Value="#2F384A"/>
+                                                <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                                            </Style>
+                                        </DataGrid.Resources>
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsCurrentPc}" Value="True">
+                                                        <Setter Property="Background" Value="#1A3A52"/>
+                                                        <Setter Property="Foreground" Value="#81D4FA"/>
+                                                        <Setter Property="FontWeight" Value="Bold"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </DataGrid.RowStyle>
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Binding="{Binding PcMarker}" Width="34">
+                                                <DataGridTextColumn.Header>
+                                                    <TextBlock Text="{DynamicResource ColVmPc}"/>
+                                                </DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn Binding="{Binding AddressFormatted}" Width="56">
+                                                <DataGridTextColumn.Header>
+                                                    <TextBlock Text="{DynamicResource ColVmAddr}"/>
+                                                </DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn Binding="{Binding Hex7}" Width="165">
+                                                <DataGridTextColumn.Header>
+                                                    <TextBlock Text="{DynamicResource ColVmHex7}"/>
+                                                </DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn Binding="{Binding Mnemonic}" Width="*">
+                                                <DataGridTextColumn.Header>
+                                                    <TextBlock Text="{DynamicResource ColVmMnemonic}"/>
+                                                </DataGridTextColumn.Header>
+                                            </DataGridTextColumn>
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
             </TabControl>
         </Grid>
 
