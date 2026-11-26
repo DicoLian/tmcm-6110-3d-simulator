@@ -185,10 +185,17 @@ internal sealed class TmclStandaloneVm
     private void ResetRuntimeState(TmclAppStatus initialStatus)
     {
         Status = initialStatus;
-        ProgramCounter = 0;
+        ExecutedInstructionCount = 0;
+        ResetVmExecutionContext(targetAddress: 0);
+    }
+
+    private void ResetVmExecutionContext(int targetAddress)
+    {
+        ProgramCounter = targetAddress;
         Accumulator = 0;
         XRegister = 0;
         ErrorFlags = 0;
+        _host.SyncErrorFlagsFromVm(0);
         FlagZero = false;
         FlagEqual = false;
         FlagGreater = false;
@@ -200,11 +207,11 @@ internal sealed class TmclStandaloneVm
         GlobalInterruptsEnabled = false;
         IsInInterrupt = false;
         ActiveInterruptNumber = -1;
+        _savedContext = default;
         Array.Fill(_interruptVectors, -1);
         Array.Clear(_interruptEnabled);
         Array.Clear(_pendingInterrupts);
         Array.Clear(_timerAccumMs);
-        ExecutedInstructionCount = 0;
 
         SampleInitialEdgeBaseline();
     }
@@ -315,7 +322,8 @@ internal sealed class TmclStandaloneVm
     {
         if (op > 9)
             return TmclStatus.WrongType;
-        if (!TryComputeAluOp(op, Accumulator, value, out int res, out bool isInvalid))
+        int rhs = op == 8 ? Accumulator : value;
+        if (!TryComputeAluOp(op, Accumulator, rhs, out int res, out bool isInvalid))
             return isInvalid ? TmclStatus.InvalidValue : TmclStatus.WrongType;
 
         SetAccumulatorWithZeroFlag(res);
@@ -753,9 +761,7 @@ internal sealed class TmclStandaloneVm
                 return;
 
             case TmclCommand.RST:
-                ClearWaitState();
-                _callStackDepth = 0;
-                ProgramCounter = val;
+                ResetVmExecutionContext(targetAddress: val);
                 return;
 
             case TmclCommand.DJNZ:
