@@ -22,7 +22,10 @@ public class AxisState : IMotionAxis
     private readonly int[] _coordinates = new int[21]; // Coordinate registers 0..20 (FW 1.47)
     private readonly int[] _eepromCoordinates = new int[21]; // EEPROM mirror for coordinates 1..20
 
-    // High-precision floating-point accumulators for smooth 3D animation & physics
+    // High-precision floating-point accumulators:
+    // _physicalPosition tracks the physical carriage position against virtual stroke limits & 3D rendering.
+    // _exactPosition tracks the TMC429 logical position counter (ActualPosition / SAP 1 / GAP 1).
+    private double _physicalPosition;
     private double _exactPosition;
     private double _exactSpeed;
     private double _interpolationSpeedOverride; // Non-zero when executing interpolated MVP COORD
@@ -190,6 +193,7 @@ public class AxisState : IMotionAxis
             Array.Clear(_coordinates);
             Array.Clear(_eepromCoordinates);
 
+            _physicalPosition = 0;
             _exactPosition = 0;
             _exactSpeed = 0;
             _interpolationSpeedOverride = 0;
@@ -245,10 +249,19 @@ public class AxisState : IMotionAxis
 
                 case TmclAxisParam.ActualPosition: // SAP 1: overwrites position counter (e.g. homing zero)
                     _exactPosition = value;
-                    // If motor was idle, sync TargetPosition so setting ActualPosition=0 doesn't cause unwanted runaway
                     if (Math.Abs(_exactSpeed) < 0.01 && _rfsState == 0)
                     {
+                        // If motor was idle, sync TargetPosition so setting ActualPosition=0 doesn't cause unwanted runaway
                         _params[TmclAxisParam.TargetPosition] = value;
+                    }
+                    else if (_params[TmclAxisParam.TargetPosition] == value && _rfsState == 0)
+                    {
+                        // TargetPosition already matches the new ActualPosition (e.g. SAP 0 = 0 then SAP 1 = 0):
+                        // clear any velocity accumulated between the two commands so the axis settles without jumping.
+                        _exactSpeed = 0;
+                        _params[TmclAxisParam.ActualSpeed] = 0;
+                        _params[TmclAxisParam.TargetSpeed] = 0;
+                        _params[TmclAxisParam.ActualAcceleration] = 0;
                     }
                     UpdateSwitchAndStatusRegistersUnsafe();
                     break;
@@ -311,6 +324,7 @@ public class AxisState : IMotionAxis
                     _coordinates[i] = _eepromCoordinates[i];
             }
 
+            _physicalPosition = 0;
             _exactPosition = 0;
             _exactSpeed = 0;
             _interpolationSpeedOverride = 0;
@@ -652,7 +666,9 @@ public class AxisState : IMotionAxis
                             _exactSpeed = 0;
                         else
                             _exactSpeed -= Math.Sign(_exactSpeed) * maxDeltaV;
-                        _exactPosition += _exactSpeed * dtSeconds;
+                        double dx = _exactSpeed * dtSeconds;
+                        _physicalPosition += dx;
+                        _exactPosition += dx;
                     }
                 }
                 else
@@ -663,21 +679,31 @@ public class AxisState : IMotionAxis
                     else
                         _exactSpeed += Math.Sign(desiredStepsPerSec - _exactSpeed) * maxDeltaV;
 
-                    _exactPosition += _exactSpeed * dtSeconds;
+                    double dx = _exactSpeed * dtSeconds;
+                    _physicalPosition += dx;
+                    _exactPosition += dx;
 
                     if (_autoTriggerStrokeLimits)
                     {
-                        if (_exactSpeed > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
+                        if (_exactSpeed > 0 && !rightLimDisabled && _physicalPosition >= effectiveMax)
                         {
                             if (!softStopOnLimit)
-                                _exactPosition = effectiveMax;
+                            {
+                                double correction = effectiveMax - _physicalPosition;
+                                _physicalPosition = effectiveMax;
+                                _exactPosition += correction;
+                            }
                             _exactSpeed = softStopOnLimit ? Math.Max(0, _exactSpeed - maxDeltaV) : 0;
                             _params[TmclAxisParam.TargetSpeed] = 0;
                         }
-                        else if (_exactSpeed < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
+                        else if (_exactSpeed < 0 && !leftLimDisabled && _physicalPosition <= effectiveMin)
                         {
                             if (!softStopOnLimit)
-                                _exactPosition = effectiveMin;
+                            {
+                                double correction = effectiveMin - _physicalPosition;
+                                _physicalPosition = effectiveMin;
+                                _exactPosition += correction;
+                            }
                             _exactSpeed = softStopOnLimit ? Math.Min(0, _exactSpeed + maxDeltaV) : 0;
                             _params[TmclAxisParam.TargetSpeed] = 0;
                         }
@@ -692,7 +718,9 @@ public class AxisState : IMotionAxis
 
                 if (Math.Abs(dist) < 0.5 && Math.Abs(_exactSpeed) <= maxDeltaV)
                 {
+                    double dx = (double)targetPos - _exactPosition;
                     _exactPosition = targetPos;
+                    _physicalPosition += dx;
                     _exactSpeed = 0;
                     _interpolationSpeedOverride = 0;
                     _interpolationAccelOverride = 0;
@@ -718,7 +746,9 @@ public class AxisState : IMotionAxis
                         else
                         {
                             _exactSpeed -= Math.Sign(_exactSpeed) * maxDeltaV;
-                            _exactPosition += _exactSpeed * dtSeconds;
+                            double dx = _exactSpeed * dtSeconds;
+                            _physicalPosition += dx;
+                            _exactPosition += dx;
                         }
                     }
                     else
@@ -744,7 +774,9 @@ public class AxisState : IMotionAxis
                         // Prevent overshooting target position within a single tick
                         if (Math.Abs(stepDelta) >= Math.Abs(dist) && Math.Sign(stepDelta) == Math.Sign(dist))
                         {
+                            double dx = (double)targetPos - _exactPosition;
                             _exactPosition = targetPos;
+                            _physicalPosition += dx;
                             _exactSpeed = 0;
                             _interpolationSpeedOverride = 0;
                             _interpolationAccelOverride = 0;
@@ -752,20 +784,23 @@ public class AxisState : IMotionAxis
                         else
                         {
                             _exactPosition += stepDelta;
+                            _physicalPosition += stepDelta;
                             _exactSpeed = nextSpeed;
                         }
 
                         if (_autoTriggerStrokeLimits)
                         {
-                            if (_exactSpeed > 0 && !rightLimDisabled && _exactPosition >= effectiveMax)
+                            if (dir > 0 && !rightLimDisabled && _physicalPosition >= effectiveMax)
                             {
                                 if (!softStopOnLimit)
                                 {
-                                    _exactPosition = effectiveMax;
+                                    double correction = effectiveMax - _physicalPosition;
+                                    _physicalPosition = effectiveMax;
+                                    _exactPosition += correction;
                                     _exactSpeed = 0;
                                     _interpolationSpeedOverride = 0;
                                     _interpolationAccelOverride = 0;
-                                    _params[TmclAxisParam.TargetPosition] = effectiveMax;
+                                    _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
                                     _params[TmclAxisParam.TargetSpeed] = 0;
                                 }
                                 else
@@ -773,15 +808,17 @@ public class AxisState : IMotionAxis
                                     _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
                                 }
                             }
-                            else if (_exactSpeed < 0 && !leftLimDisabled && _exactPosition <= effectiveMin)
+                            else if (dir < 0 && !leftLimDisabled && _physicalPosition <= effectiveMin)
                             {
                                 if (!softStopOnLimit)
                                 {
-                                    _exactPosition = effectiveMin;
+                                    double correction = effectiveMin - _physicalPosition;
+                                    _physicalPosition = effectiveMin;
+                                    _exactPosition += correction;
                                     _exactSpeed = 0;
                                     _interpolationSpeedOverride = 0;
                                     _interpolationAccelOverride = 0;
-                                    _params[TmclAxisParam.TargetPosition] = effectiveMin;
+                                    _params[TmclAxisParam.TargetPosition] = (int)Math.Round(_exactPosition);
                                     _params[TmclAxisParam.TargetSpeed] = 0;
                                 }
                                 else
@@ -847,17 +884,22 @@ public class AxisState : IMotionAxis
         void AdvancePosition(double velocityStepsPerSec)
         {
             _exactSpeed = velocityStepsPerSec;
-            _exactPosition += _exactSpeed * dtSeconds;
+            double prevPhysical = _physicalPosition;
+            double nextPhysical = prevPhysical + _exactSpeed * dtSeconds;
             if (clampToLimits)
             {
-                if (_exactPosition > effectiveMax) _exactPosition = effectiveMax;
-                else if (_exactPosition < effectiveMin) _exactPosition = effectiveMin;
+                if (nextPhysical > effectiveMax) nextPhysical = effectiveMax;
+                else if (nextPhysical < effectiveMin) nextPhysical = effectiveMin;
             }
+            double actualDx = nextPhysical - prevPhysical;
+            _physicalPosition = nextPhysical;
+            _exactPosition += actualDx;
         }
 
         void CompleteHoming(int calibratedPos)
         {
             _params[TmclAxisParam.LastReferencePosition] = calibratedPos;
+            // Only zero the logical position counter; keep _physicalPosition at the actual carriage position
             _exactPosition = 0;
             _exactSpeed = 0;
             _params[TmclAxisParam.ActualPosition] = 0;
@@ -1080,13 +1122,14 @@ public class AxisState : IMotionAxis
 
     private void UpdateSwitchAndStatusRegistersUnsafe()
     {
-        int pos = (int)Math.Round(_exactPosition);
+        int logicalPos = (int)Math.Round(_exactPosition);
+        int physicalPos = (int)Math.Round(_physicalPosition);
         int target = _params[TmclAxisParam.TargetPosition];
 
         int effectiveMin = Math.Min(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
         int effectiveMax = Math.Max(_virtualMinStrokeSteps, _virtualMaxStrokeSteps);
-        bool autoRight = _autoTriggerStrokeLimits && pos >= effectiveMax;
-        bool autoLeft = _autoTriggerStrokeLimits && pos <= effectiveMin;
+        bool autoRight = _autoTriggerStrokeLimits && physicalPos >= effectiveMax;
+        bool autoLeft = _autoTriggerStrokeLimits && physicalPos <= effectiveMin;
 
         bool rightActive = ManualRightLimitOverride || autoRight;
         bool leftActive = ManualLeftLimitOverride || autoLeft;
@@ -1097,7 +1140,7 @@ public class AxisState : IMotionAxis
         _params[TmclAxisParam.HomeSwitchState] = refActive ? 1 : 0;
 
         bool isStopped = Math.Abs(_exactSpeed) < 0.05 && _rfsState == 0;
-        bool posReached = isStopped && (_params[TmclAxisParam.RampMode] == 0) && (pos == target);
+        bool posReached = isStopped && (_params[TmclAxisParam.RampMode] == 0) && (logicalPos == target);
         _params[TmclAxisParam.TargetPosReached] = posReached ? 1 : 0;
 
         int rawCurrent = isStopped
@@ -1174,7 +1217,8 @@ public class AxisState : IMotionAxis
                 _virtualMinStrokeSteps,
                 _virtualMaxStrokeSteps,
                 _params[TmclAxisParam.RightLimitSwitchDisable] != 0,
-                _params[TmclAxisParam.LeftLimitSwitchDisable] != 0
+                _params[TmclAxisParam.LeftLimitSwitchDisable] != 0,
+                _physicalPosition
             );
         }
     }
@@ -1259,5 +1303,6 @@ public readonly record struct AxisSnapshot(
     int VirtualMinStrokeSteps,
     int VirtualMaxStrokeSteps,
     bool IsRightLimitDisabled,
-    bool IsLeftLimitDisabled
+    bool IsLeftLimitDisabled,
+    double PhysicalPosition
 );

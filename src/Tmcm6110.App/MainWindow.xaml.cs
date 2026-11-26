@@ -77,10 +77,11 @@ public partial class MainWindow : Window
             axisVm.RefreshFromSnapshot(snap, stepsPerMm);
 
             int roleSlot = axisVm.AssignedRoleSlot;
-            double posMm = snap.ExactPosition / stepsPerMm;
-            _posMmBuffer[roleSlot] = posMm;
+            double logicalPosMm = snap.ExactPosition / stepsPerMm;
+            double physicalPosMm = snap.PhysicalPosition / stepsPerMm;
+            _posMmBuffer[roleSlot] = logicalPosMm;
             _frameBuffer[roleSlot] = new Axis3DFrame(
-                posMm,
+                physicalPosMm,
                 snap.VirtualMinStrokeSteps / stepsPerMm,
                 snap.VirtualMaxStrokeSteps / stepsPerMm,
                 snap.IsRightLimitTriggered,

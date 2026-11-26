@@ -443,4 +443,72 @@ public class Tmcm6110ControllerTests
         Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 85, 0, 0)).Value);
         Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GGP, 79, 0, 0)).Value);
     }
+
+    [Fact]
+    public void ZeroingWithSap0ThenSap1_WithInterveningTicks_DoesNotJumpAndNextMvpWorksCleanly()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // Move axis 2 to -2000 and let it settle
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, -2000)).StatusEnum);
+        for (int i = 0; i < 200; i++)
+            controller.StepSimulation(0.01);
+        Assert.Equal(-2000, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+
+        // Send SAP 0 = 0, simulate serial latency (50 ms) before SAP 1 = 0 arrives
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.TargetPosition, 2, 0)).StatusEnum);
+        for (int i = 0; i < 5; i++)
+            controller.StepSimulation(0.01);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ActualPosition, 2, 0)).StatusEnum);
+
+        // Axis must settle immediately at 0 without overshooting or jumping
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value);
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosReached, 2, 0)).Value);
+
+        for (int i = 0; i < 20; i++)
+        {
+            controller.StepSimulation(0.01);
+            Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+        }
+
+        // Subsequent MVP REL and MVP ABS must move cleanly
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 1, 2, 1500)).StatusEnum);
+        for (int i = 0; i < 200; i++)
+            controller.StepSimulation(0.01);
+        Assert.Equal(1500, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, -500)).StatusEnum);
+        for (int i = 0; i < 200; i++)
+            controller.StepSimulation(0.01);
+        Assert.Equal(-500, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+    }
+
+    [Fact]
+    public void ReferenceSearch_UsesSap194SearchSpeedAndSap195SwitchSpeed()
+    {
+        var controller = new Tmcm6110Controller();
+        var axis = controller.GetAxis(2);
+        axis.SetVirtualStrokeLimits(-10_000, 10_000);
+
+        // Configure distinct SAP 194 (SearchSpeed=800) and SAP 195 (SwitchSpeed=150)
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, 2, 65)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchSpeed, 2, 800)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSwitchSpeed, 2, 150)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.RFS, 0, 2, 0)).StatusEnum);
+
+        bool observedSearchSpeed = false;
+        bool observedSwitchSpeed = false;
+        for (int i = 0; i < 300 && controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 2, 0)).Value != 0; i++)
+        {
+            controller.StepSimulation(0.01);
+            int speed = controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value;
+            if (speed == 800) observedSearchSpeed = true;
+            if (speed == -150) observedSwitchSpeed = true;
+        }
+
+        Assert.True(observedSearchSpeed);
+        Assert.True(observedSwitchSpeed);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 2, 0)).Value);
+    }
 }

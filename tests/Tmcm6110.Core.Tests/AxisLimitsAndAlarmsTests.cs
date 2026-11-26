@@ -412,4 +412,83 @@ public class AxisLimitsAndAlarmsTests
         Assert.True(observedDeceleratingAfterLimit);
         Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualSpeed, 2, 0)).Value);
     }
+
+    [Fact]
+    public void CornerOrigin_RfsThenMvpRelBackoffThenSap0Sap1Zero_KeepsPhysicalCarriageAwayFromLimit()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // +Limit corner origin [-5000, 0]: RFS Mode 65 -> MVP REL -2000 -> SAP 0=0 & SAP 1=0 -> GAP 1==0, GAP 10/11==0
+        var axY = controller.GetAxis(1);
+        axY.SetVirtualStrokeLimits(-5000, 0);
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.RightLimitSwitchDisable, 1, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.LeftLimitSwitchDisable, 1, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 1, -3000));
+        for (int i = 0; i < 150; i++)
+            controller.StepSimulation(0.01);
+
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, 1, 65));
+        controller.ProcessCommand(Cmd(TmclCommand.RFS, 0, 1, 0));
+        for (int i = 0; i < 200; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 1, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 1, 0)).Value);
+        double physAfterRfsY = axY.GetSnapshot().PhysicalPosition;
+        Assert.True(physAfterRfsY < 0 && physAfterRfsY > -500);
+
+        // Back off 2000 steps away from +Limit
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 1, 1, -2000));
+        for (int i = 0; i < 150; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(-2000, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 1, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.RightLimitSwitchStatus, 1, 0)).Value);
+        double physBeforeZeroY = axY.GetSnapshot().PhysicalPosition;
+        Assert.True(physBeforeZeroY < -2000);
+
+        // Zero logical counter with SAP 0 = 0 & SAP 1 = 0: physical carriage must NOT teleport back to 0 (+Limit)
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.TargetPosition, 1, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ActualPosition, 1, 0));
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 1, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosition, 1, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.RightLimitSwitchStatus, 1, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.LeftLimitSwitchStatus, 1, 0)).Value);
+        Assert.Equal(physBeforeZeroY, axY.GetSnapshot().PhysicalPosition, precision: 3);
+
+        // -Limit corner origin [0, 5000]: RFS Mode 1 -> MVP REL +2000 -> SAP 0=0 & SAP 1=0 -> GAP 1==0, GAP 10/11==0
+        var axX = controller.GetAxis(2);
+        axX.SetVirtualStrokeLimits(0, 5000);
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.RightLimitSwitchDisable, 2, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.LeftLimitSwitchDisable, 2, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 0, 2, 3000));
+        for (int i = 0; i < 150; i++)
+            controller.StepSimulation(0.01);
+
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ReferenceSearchMode, 2, 1));
+        controller.ProcessCommand(Cmd(TmclCommand.RFS, 0, 2, 0));
+        for (int i = 0; i < 200; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.RFS, 2, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+
+        controller.ProcessCommand(Cmd(TmclCommand.MVP, 1, 2, 2000));
+        for (int i = 0; i < 150; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(2000, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+        double physBeforeZeroX = axX.GetSnapshot().PhysicalPosition;
+        Assert.True(physBeforeZeroX > 2000);
+
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.TargetPosition, 2, 0));
+        controller.ProcessCommand(Cmd(TmclCommand.SAP, TmclAxisParam.ActualPosition, 2, 0));
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.TargetPosition, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.RightLimitSwitchStatus, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GAP, TmclAxisParam.LeftLimitSwitchStatus, 2, 0)).Value);
+        Assert.Equal(physBeforeZeroX, axX.GetSnapshot().PhysicalPosition, precision: 3);
+    }
 }
