@@ -66,6 +66,9 @@ public readonly struct TmclCommandPacket
     /// </summary>
     public string ToMnemonicDescription(Func<int, string>? axisLabelResolver = null)
     {
+        if (Command == 0)
+            return "END_MARKER (0x00)";
+
         string axisLabel = axisLabelResolver != null ? axisLabelResolver(MotorOrBank) : $"Axis {MotorOrBank}";
 
         return CommandEnum switch
@@ -97,6 +100,29 @@ public readonly struct TmclCommandPacket
             },
             TmclCommand.SIO => $"SIO Port#{TypeNumber}, Bank {MotorOrBank}, Val={Value}",
             TmclCommand.GIO => $"GIO Port#{TypeNumber}, Bank {MotorOrBank}",
+            TmclCommand.SAPX => $"SAPX {TmclAxisParam.GetParameterName(TypeNumber)}, [X], Val={Value}",
+            TmclCommand.GAPX => $"GAPX {TmclAxisParam.GetParameterName(TypeNumber)}, [X]",
+            TmclCommand.AAPX => $"AAPX {TmclAxisParam.GetParameterName(TypeNumber)}, [X]",
+            TmclCommand.CALC => TypeNumber == 8
+                ? "CALC NOT"
+                : $"CALC {GetCalcOperationName(TypeNumber)}, {Value}",
+            TmclCommand.COMP => $"COMP {Value}",
+            TmclCommand.JC => $"JC {GetConditionName(TypeNumber)}, Addr={Value}",
+            TmclCommand.JA => $"JA Addr={Value}",
+            TmclCommand.CSUB => $"CSUB Addr={Value}",
+            TmclCommand.RSUB => "RSUB",
+            TmclCommand.EI => TypeNumber == 255 ? "EI ALL (255)" : $"EI IRQ#{TypeNumber}",
+            TmclCommand.DI => TypeNumber == 255 ? "DI ALL (255)" : $"DI IRQ#{TypeNumber}",
+            TmclCommand.WAIT => TypeNumber switch
+            {
+                0 => Value == -1 ? "WAIT TICKS, Accu" : $"WAIT TICKS, {Value}",
+                1 => $"WAIT POS, {axisLabel}, Timeout={Value}",
+                2 => $"WAIT REFSW, {axisLabel}, Timeout={Value}",
+                3 => $"WAIT LIMSW, {axisLabel}, Timeout={Value}",
+                4 => $"WAIT RFS, {axisLabel}, Timeout={Value}",
+                _ => $"WAIT Type={TypeNumber}, {axisLabel}, Ticks={Value}"
+            },
+            TmclCommand.STOP => "STOP",
             TmclCommand.SCO => MotorOrBank == 255
                 ? $"SCO Coord#{TypeNumber}, 255 (RAM->EEPROM)"
                 : $"SCO Coord#{TypeNumber}, {axisLabel}, Pos={Value}",
@@ -104,7 +130,9 @@ public readonly struct TmclCommandPacket
                 ? $"GCO Coord#{TypeNumber}, 255 (EEPROM->RAM)"
                 : $"GCO Coord#{TypeNumber}, {axisLabel}",
             TmclCommand.CCO => $"CCO Coord#{TypeNumber}, {axisLabel}",
-            TmclCommand.ACO => $"ACO Coord#{TypeNumber}, {axisLabel}",
+            TmclCommand.CALCX => $"CALCX {GetCalcOperationName(TypeNumber)}",
+            TmclCommand.AAP => $"AAP {TmclAxisParam.GetParameterName(TypeNumber)}, {axisLabel}",
+            TmclCommand.AGP => $"AGP Param#{TypeNumber}, Bank {MotorOrBank}",
             TmclCommand.CLE => TypeNumber switch
             {
                 0 => "CLE ALL (Clear All Error Flags)",
@@ -115,20 +143,110 @@ public readonly struct TmclCommandPacket
                 5 => "CLE ESD (Clear Shutdown Flag)",
                 _ => $"CLE Type={TypeNumber}"
             },
+            TmclCommand.VECT => $"VECT IRQ#{TypeNumber}, Addr={Value}",
+            TmclCommand.RETI => "RETI",
+            TmclCommand.ACO => $"ACO Coord#{TypeNumber}, {axisLabel}",
+            TmclCommand.CALCVV => $"CALCVV {GetCalcOperationName(TypeNumber)}, Var#{MotorOrBank}, Var#{Value}",
+            TmclCommand.CALCVA => $"CALCVA {GetCalcOperationName(TypeNumber)}, Var#{MotorOrBank}",
+            TmclCommand.CALCAV => $"CALCAV {GetCalcOperationName(TypeNumber)}, Var#{MotorOrBank}",
+            TmclCommand.CALCVX => $"CALCVX {GetCalcOperationName(TypeNumber)}, Var#{MotorOrBank}",
+            TmclCommand.CALCXV => $"CALCXV {GetCalcOperationName(TypeNumber)}, Var#{MotorOrBank}",
+            TmclCommand.CALCV => TypeNumber == 8
+                ? $"CALCV NOT, Var#{MotorOrBank}"
+                : $"CALCV {GetCalcOperationName(TypeNumber)}, Var#{MotorOrBank}, {Value}",
+            TmclCommand.MVPA => TypeNumber switch
+            {
+                0 => $"MVPA ABS, {axisLabel}, Accu",
+                1 => $"MVPA REL, {axisLabel}, Accu",
+                2 => $"MVPA COORD, Mask=0x{MotorOrBank:X2}, Accu",
+                _ => $"MVPA Type={TypeNumber}, {axisLabel}, Accu"
+            },
+            TmclCommand.MVPXA => TypeNumber switch
+            {
+                0 => "MVPXA ABS, [X], Accu",
+                1 => "MVPXA REL, [X], Accu",
+                2 => "MVPXA COORD, [X], Accu",
+                _ => $"MVPXA Type={TypeNumber}, [X], Accu"
+            },
+            TmclCommand.RST => $"RST Addr={Value}",
+            TmclCommand.DJNZ => $"DJNZ Var#{TypeNumber}, Addr={Value}",
+            TmclCommand.ROLA => $"ROLA {axisLabel}, Accu",
+            TmclCommand.RORA => $"RORA {axisLabel}, Accu",
+            TmclCommand.ROLXA => "ROLXA [X], Accu",
+            TmclCommand.RORXA => "RORXA [X], Accu",
+            TmclCommand.MSTX => "MSTX [X]",
+            TmclCommand.SIV => $"SIV [X], Val={Value}",
+            TmclCommand.GIV => "GIV [X]",
+            TmclCommand.AIV => "AIV [X]",
+            TmclCommand.CALL => $"CALL {GetConditionName(TypeNumber)}, Addr={Value}",
+            TmclCommand.StopApplication => "StopApplication (128)",
+            TmclCommand.RunApplication => TypeNumber == 1
+                ? $"RunApplication (129), Addr={Value}"
+                : $"RunApplication (129), Type={TypeNumber}",
+            TmclCommand.StepApplication => "StepApplication (130)",
+            TmclCommand.ResetApplication => "ResetApplication (131)",
+            TmclCommand.StartDownload => $"StartDownload (132), Addr={Value}",
+            TmclCommand.QuitDownload => "QuitDownload (133)",
+            TmclCommand.ReadTmclMemory => $"ReadTmclMemory (134), Addr={Value}",
             TmclCommand.GetAppStatus => $"GetAppStatus (135), Type={TypeNumber}",
             TmclCommand.GetFirmwareVersion => $"GetFirmwareVersion (136), Type={TypeNumber}",
             TmclCommand.RestoreFactorySettings => $"RestoreFactorySettings (137), Magic={Value}",
             TmclCommand.RequestTargetPositionReachedEvent => $"ReqPosReachedEvent (138), Type={TypeNumber} ({(TypeNumber == 1 ? "EveryMVP" : "NextMVP")}), AxisMask=0x{Value:X2}",
+            TmclCommand.EnterAsciiMode => "EnterAsciiMode (139)",
             TmclCommand.SoftwareReset => $"SoftwareReset (255), Magic={Value}",
             _ => $"Cmd#{Command} ({CommandEnum}), Type={TypeNumber}, Mot/Bank={MotorOrBank}, Val={Value}"
         };
     }
+
+    private static string GetCalcOperationName(byte op) => op switch
+    {
+        0 => "ADD",
+        1 => "SUB",
+        2 => "MUL",
+        3 => "DIV",
+        4 => "MOD",
+        5 => "AND",
+        6 => "OR",
+        7 => "XOR",
+        8 => "NOT",
+        9 => "LOAD",
+        10 => "SWAP",
+        11 => "COMP",
+        _ => $"Op#{op}"
+    };
+
+    private static string GetConditionName(byte cond) => cond switch
+    {
+        0 => "ZE",
+        1 => "NZ",
+        2 => "EQ",
+        3 => "NE",
+        4 => "GT",
+        5 => "GE",
+        6 => "LT",
+        7 => "LE",
+        8 => "ETO",
+        9 => "EAL",
+        10 => "EDV",
+        11 => "EPO",
+        _ => $"Cond#{cond}"
+    };
 
     public bool IsPollingQuery =>
         CommandEnum == TmclCommand.GAP ||
         CommandEnum == TmclCommand.GGP ||
         CommandEnum == TmclCommand.GIO ||
         (CommandEnum == TmclCommand.RFS && TypeNumber == 2);
+}
+
+/// <summary>
+/// Distinguishes special non-checksum 9-byte TMCL reply payloads.
+/// </summary>
+public enum TmclRawReplyKind
+{
+    None = 0,
+    FirmwareVersionString = 1,
+    ProgramMemorySlot = 2
 }
 
 /// <summary>
@@ -143,7 +261,9 @@ public readonly struct TmclReplyPacket
     public byte Command { get; }
     public int Value { get; }
     public byte Checksum { get; }
-    public byte[]? RawOverrideBytes { get; } // Used for Cmd 136 Type 0 string reply (no checksum)
+    public byte[]? RawOverrideBytes { get; } // Used for Cmd 136 Type 0 string reply or Cmd 134 memory slot reply (no checksum)
+    public TmclRawReplyKind RawKind { get; }
+    public string? DescriptionOverride { get; }
 
     public TmclStatus StatusEnum => (TmclStatus)Status;
 
@@ -155,6 +275,8 @@ public readonly struct TmclReplyPacket
         Command = command;
         Value = value;
         RawOverrideBytes = null;
+        RawKind = TmclRawReplyKind.None;
+        DescriptionOverride = null;
 
         byte b3 = (byte)((value >> 24) & 0xFF);
         byte b2 = (byte)((value >> 16) & 0xFF);
@@ -165,17 +287,57 @@ public readonly struct TmclReplyPacket
     }
 
     public TmclReplyPacket(byte[] rawBytes)
+        : this(rawBytes, TmclRawReplyKind.FirmwareVersionString, null)
     {
-        if (rawBytes.Length != 9)
+    }
+
+    public TmclReplyPacket(byte[] rawBytes, TmclRawReplyKind rawKind, string? descriptionOverride = null)
+    {
+        if (rawBytes is null || rawBytes.Length != 9)
             throw new ArgumentException("Raw reply must be 9 bytes.", nameof(rawBytes));
 
         ReplyAddress = rawBytes[0];
         ModuleAddress = rawBytes[1];
         Status = rawBytes[2];
         Command = rawBytes[3];
-        Value = (rawBytes[4] << 24) | (rawBytes[5] << 16) | (rawBytes[6] << 8) | rawBytes[7];
+        Value = rawKind == TmclRawReplyKind.ProgramMemorySlot
+            ? (rawBytes[5] << 24) | (rawBytes[6] << 16) | (rawBytes[7] << 8) | rawBytes[8]
+            : (rawBytes[4] << 24) | (rawBytes[5] << 16) | (rawBytes[6] << 8) | rawBytes[7];
         Checksum = rawBytes[8];
         RawOverrideBytes = rawBytes;
+        RawKind = rawKind;
+        DescriptionOverride = descriptionOverride;
+    }
+
+    /// <summary>
+    /// Builds the 9-byte special reply for Command 134 (Read TMCL Program Memory, FW V1.47 Section 3.2 &amp; Table 14).
+    /// Layout: [0]=ReplyAddr, [1]=ModuleAddr, [2]=Opcode, [3]=Type, [4]=MotorOrBank, [5..8]=Value (MSB first, no checksum).
+    /// </summary>
+    public static TmclReplyPacket CreateMemoryReadReply(
+        byte replyAddress,
+        byte moduleAddress,
+        byte opcode,
+        byte type,
+        byte motorOrBank,
+        int value,
+        Func<int, string>? axisLabelResolver = null)
+    {
+        byte[] raw = new byte[9]
+        {
+            replyAddress,
+            moduleAddress,
+            opcode,
+            type,
+            motorOrBank,
+            (byte)((value >> 24) & 0xFF),
+            (byte)((value >> 16) & 0xFF),
+            (byte)((value >> 8) & 0xFF),
+            (byte)(value & 0xFF)
+        };
+
+        string mnemonic = new TmclCommandPacket(moduleAddress, opcode, type, motorOrBank, value)
+            .ToMnemonicDescription(axisLabelResolver);
+        return new TmclReplyPacket(raw, TmclRawReplyKind.ProgramMemorySlot, mnemonic);
     }
 
     public byte[] ToBytes()
@@ -209,8 +371,39 @@ public readonly struct TmclReplyPacket
     {
         if (RawOverrideBytes != null)
         {
-            string verStr = System.Text.Encoding.ASCII.GetString(RawOverrideBytes, 1, 8);
-            return $"FirmwareString=\"{verStr}\"";
+            switch (RawKind)
+            {
+                case TmclRawReplyKind.FirmwareVersionString:
+                {
+                    string verStr = System.Text.Encoding.ASCII.GetString(RawOverrideBytes, 1, 8);
+                    return $"FirmwareString=\"{verStr}\"";
+                }
+                case TmclRawReplyKind.ProgramMemorySlot:
+                {
+                    if (!string.IsNullOrWhiteSpace(DescriptionOverride))
+                    {
+                        return DescriptionOverride.StartsWith("MemRead:", StringComparison.Ordinal)
+                            ? DescriptionOverride
+                            : $"MemRead: {DescriptionOverride}";
+                    }
+
+                    int memValue = (RawOverrideBytes[5] << 24)
+                                 | (RawOverrideBytes[6] << 16)
+                                 | (RawOverrideBytes[7] << 8)
+                                 | RawOverrideBytes[8];
+                    var cmd = new TmclCommandPacket(
+                        RawOverrideBytes[1],
+                        RawOverrideBytes[2],
+                        RawOverrideBytes[3],
+                        RawOverrideBytes[4],
+                        memValue);
+                    return $"MemRead: {cmd.ToMnemonicDescription()}";
+                }
+                default:
+                    if (!string.IsNullOrWhiteSpace(DescriptionOverride))
+                        return DescriptionOverride;
+                    break;
+            }
         }
         return $"Status={Status} ({StatusEnum}), Cmd={Command} ({(TmclCommand)Command}), Val={Value}";
     }
