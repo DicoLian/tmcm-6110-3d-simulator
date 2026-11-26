@@ -9,9 +9,9 @@ namespace Tmcm6110.Core.Engine;
 /// TMCM-6110 TMCL Firmware Manual V1.47 (Rev V1.23).
 /// Processes 9-Byte Binary TMCL Packets, manages Axis 0..5 states, Bank 0/2/3 Global Parameters,
 /// Digital/12-bit Analog I/O, Multi-Axis Interpolation (MVP COORD, up to 3 axes per call),
-/// and Command 138 Async Position Reached Events.
+/// Command 138 Async Position Reached Events, and Standalone TMCL Program Memory &amp; VM execution.
 /// </summary>
-public class Tmcm6110Controller : IMotionController
+public class Tmcm6110Controller : IMotionController, ITmclVmHost
 {
     public const int TotalAxes = 6;
     public const int MaxCoordinateIndex = 20;
@@ -29,9 +29,10 @@ public class Tmcm6110Controller : IMotionController
     private int _supplyVoltageDeciVolts = 240;            // Bank 1 Port 8: Supply Voltage [1/10V] (24.0V)
     private int _stopSwitchPullUpMask = 3;                // SIO 0, 0, <0..3> (default 3 = all pull-ups on)
 
-    // Standalone / Control registers
-    private int _accumulator;
-    private int _xRegister;
+    // Standalone Program Memory & VM
+    private readonly TmclProgramMemory _programMemory = new();
+    private readonly TmclStandaloneVm _vm;
+    private long _programRevision;
     private int _internalErrorFlags; // Bits: 0=ETO, 1=EAL, 2=EDV, 3=EPO, 4=ESD
     private Random _random = new();
 
@@ -54,6 +55,11 @@ public class Tmcm6110Controller : IMotionController
 
     public byte SecondarySerialAddress => (byte)GetGlobalParameter(0, 87);
     public bool SuppressDirectReplies => GetGlobalParameter(0, 255) != 0;
+
+    public long ProgramRevision
+    {
+        get { lock (_controllerLock) return _programRevision; }
+    }
 
     public int SupplyVoltageDeciVolts
     {
@@ -90,6 +96,7 @@ public class Tmcm6110Controller : IMotionController
         _axes[4] = new AxisState(4, "A4 (Unused)");
         _axes[5] = new AxisState(5, "A5 (Unused)");
 
+        _vm = new TmclStandaloneVm(_programMemory, this);
         ResetGlobalParametersToDefaults();
     }
 
@@ -127,6 +134,48 @@ public class Tmcm6110Controller : IMotionController
         if (axisIndex >= 0 && axisIndex < TotalAxes)
             return $"Axis {axisIndex} ({_axes[axisIndex].AxisName})";
         return $"Axis {axisIndex}";
+    }
+
+    public StandaloneVmSnapshot GetStandaloneSnapshot()
+    {
+        lock (_controllerLock)
+        {
+            return _vm.GetSnapshot(
+                codeProtectionMode: GetGlobalParameterUnsafe(0, 81),
+                autoStartEnabled: GetGlobalParameterUnsafe(0, 77) != 0);
+        }
+    }
+
+    public IReadOnlyList<TmclProgramLine> GetDisassembledProgram()
+    {
+        lock (_controllerLock)
+        {
+            return _programMemory.GetDisassembly(_vm.ProgramCounter, GetAxisDisplayLabel);
+        }
+    }
+
+    public void ClearProgramMemory()
+    {
+        lock (_controllerLock)
+        {
+            ClearProgramMemoryUnsafe();
+        }
+    }
+
+    private void ClearProgramMemoryUnsafe()
+    {
+        _programMemory.Clear();
+        _vm.ResetToStopped();
+        _internalErrorFlags = 0;
+        _programRevision++;
+        SyncVmGlobalParametersUnsafe();
+    }
+
+    private void SyncVmGlobalParametersUnsafe()
+    {
+        _globalParams[(0, 128)] = (int)_vm.Status;
+        _globalParams[(0, 129)] = _programMemory.IsDownloadMode ? 1 : 0;
+        _globalParams[(0, 130)] = _programMemory.IsDownloadMode ? _programMemory.WritePointer : _vm.ProgramCounter;
     }
 
     public void ResetGlobalParametersToDefaults()
@@ -174,12 +223,13 @@ public class Tmcm6110Controller : IMotionController
             _analogIn4 = 2048;
             _supplyVoltageDeciVolts = 240;
             _stopSwitchPullUpMask = 3;
-            _accumulator = 0;
-            _xRegister = 0;
             _internalErrorFlags = 0;
             _event138Mask = 0;
             _event138Continuous = false;
             _event138PendingMask = 0;
+
+            _vm.ResetToStopped();
+            SyncVmGlobalParametersUnsafe();
         }
     }
 
@@ -187,10 +237,7 @@ public class Tmcm6110Controller : IMotionController
     {
         lock (_controllerLock)
         {
-            if (bank == 0 && param == 133)
-                return _random.Next(0, int.MaxValue);
-
-            return _globalParams.TryGetValue((bank, param), out int val) ? val : 0;
+            return GetGlobalParameterUnsafe(bank, param);
         }
     }
 
@@ -201,22 +248,41 @@ public class Tmcm6110Controller : IMotionController
             if (bank == 0 && param == 133)
                 _random = new Random(value);
 
+            if (bank == 0 && param == 81 && value is >= 0 and <= 3)
+                HandleCodeProtectionChangeUnsafe(value);
+
             _globalParams[(bank, param)] = value;
         }
     }
 
-    public bool GetDigitalOutput(int port) => port >= 0 && port < _digitalOutputs.Length && _digitalOutputs[port] != 0;
-    public void SetDigitalOutput(int port, bool state)
+    public bool GetDigitalOutput(int port)
     {
-        if (port >= 0 && port < _digitalOutputs.Length)
-            _digitalOutputs[port] = state ? 1 : 0;
+        lock (_controllerLock)
+            return port >= 0 && port < _digitalOutputs.Length && _digitalOutputs[port] != 0;
     }
 
-    public bool GetDigitalInput(int port) => port >= 0 && port < _digitalInputs.Length && _digitalInputs[port] != 0;
+    public void SetDigitalOutput(int port, bool state)
+    {
+        lock (_controllerLock)
+        {
+            if (port >= 0 && port < _digitalOutputs.Length)
+                _digitalOutputs[port] = state ? 1 : 0;
+        }
+    }
+
+    public bool GetDigitalInput(int port)
+    {
+        lock (_controllerLock)
+            return port >= 0 && port < _digitalInputs.Length && _digitalInputs[port] != 0;
+    }
+
     public void SetDigitalInput(int port, bool state)
     {
-        if (port >= 0 && port < _digitalInputs.Length)
-            _digitalInputs[port] = state ? 1 : 0;
+        lock (_controllerLock)
+        {
+            if (port >= 0 && port < _digitalInputs.Length)
+                _digitalInputs[port] = state ? 1 : 0;
+        }
     }
 
     public int GetAnalogInput(int port)
@@ -277,7 +343,8 @@ public class Tmcm6110Controller : IMotionController
     }
 
     /// <summary>
-    /// Advances physics for all axes and emits Command 138 Position Reached Events when armed targets arrive.
+    /// Advances physics for all axes, emits Command 138 Position Reached Events when armed targets arrive,
+    /// and steps the standalone TMCL VM &amp; interrupt controller.
     /// </summary>
     public void StepSimulation(double dtSeconds)
     {
@@ -318,6 +385,9 @@ public class Tmcm6110Controller : IMotionController
                         reachedNow);
                 }
             }
+
+            _vm.StepTick(dtSeconds);
+            SyncVmGlobalParametersUnsafe();
         }
 
         if (asyncEventPacket.HasValue)
@@ -358,244 +428,140 @@ public class Tmcm6110Controller : IMotionController
         byte motOrBank = cmd.MotorOrBank;
         int val = cmd.Value;
 
+        // FW V1.47 Section 3.7.60: In download mode, non-control commands (< 128) are stored in EEPROM, not executed.
+        if (_programMemory.IsDownloadMode && opcode < 128)
+        {
+            var instr = new TmclInstruction(opcode, type, motOrBank, val);
+            if (!_programMemory.TryWriteNext(instr, out int writtenAddr))
+                return Reply(TmclStatus.InvalidValue, opcode, 0);
+
+            _programRevision++;
+            SyncVmGlobalParametersUnsafe();
+            return Reply(TmclStatus.CommandLoadedIntoEeprom, opcode, writtenAddr);
+        }
+
         switch (cmd.CommandEnum)
         {
-            case TmclCommand.ROR:
-                if (motOrBank >= TotalAxes || val < -2047 || val > 2047)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                ExecuteWithGroupIndex(motOrBank, ax => ax.RotateRight(val));
-                return Reply(TmclStatus.SuccessOk, opcode, val);
-
-            case TmclCommand.ROL:
-                if (motOrBank >= TotalAxes || val < -2047 || val > 2047)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                ExecuteWithGroupIndex(motOrBank, ax => ax.RotateLeft(val));
-                return Reply(TmclStatus.SuccessOk, opcode, val);
-
-            case TmclCommand.MST:
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                ExecuteWithGroupIndex(motOrBank, ax => ax.StopMotor());
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.MVP:
-                return HandleMvpCommandUnsafe(type, motOrBank, val);
-
-            case TmclCommand.SAP:
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (!TmclAxisParam.IsValidParameter(type) || TmclAxisParam.IsReadOnly(type))
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                if (!TmclAxisParam.IsValueValid(type, val))
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                _axes[motOrBank].SetParameter(type, val);
-                return Reply(TmclStatus.SuccessOk, opcode, val);
-
-            case TmclCommand.GAP:
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (!TmclAxisParam.IsValidParameter(type))
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                int paramVal = _axes[motOrBank].GetParameter(type);
-                return Reply(TmclStatus.SuccessOk, opcode, paramVal);
-
-            case TmclCommand.STAP:
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (!TmclAxisParam.IsValidParameter(type) || TmclAxisParam.IsReadOnly(type))
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                _axes[motOrBank].StoreParameterToEeprom(type);
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.RSAP:
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (!TmclAxisParam.IsValidParameter(type) || TmclAxisParam.IsReadOnly(type))
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                _axes[motOrBank].RestoreParameterFromEeprom(type);
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.SGP:
-                return HandleSgpCommandUnsafe(type, motOrBank, val);
-
-            case TmclCommand.GGP:
-                return HandleGgpCommandUnsafe(type, motOrBank);
-
-            case TmclCommand.STGP:
-                if (motOrBank != 2)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                _userVarEeprom[type] = _globalParams.TryGetValue((2, type), out int uv) ? uv : 0;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.RSGP:
-                if (motOrBank != 2)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                _globalParams[(2, type)] = _userVarEeprom[type];
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.RFS:
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (type == 0) // RFS START
-                {
-                    ExecuteWithGroupIndex(motOrBank, ax => ax.StartReferenceSearch());
-                    return Reply(TmclStatus.SuccessOk, opcode, 0);
-                }
-                else if (type == 1) // RFS STOP
-                {
-                    ExecuteWithGroupIndex(motOrBank, ax => ax.StopReferenceSearch());
-                    return Reply(TmclStatus.SuccessOk, opcode, 0);
-                }
-                else if (type == 2) // RFS STATUS
-                {
-                    int status = _axes[motOrBank].GetReferenceSearchStatus();
-                    return Reply(TmclStatus.SuccessOk, opcode, status);
-                }
-                return Reply(TmclStatus.WrongType, opcode, 0);
-
-            case TmclCommand.SIO:
-                if (motOrBank == 2)
-                {
-                    if (type == 255)
-                    {
-                        int outMask = val == -1 ? (_accumulator & 0xFF) : val;
-                        if (outMask < 0 || outMask > 255)
-                            return Reply(TmclStatus.InvalidValue, opcode, 0);
-                        for (int i = 0; i < 8; i++)
-                            _digitalOutputs[i] = (outMask & (1 << i)) != 0 ? 1 : 0;
-                        return Reply(TmclStatus.SuccessOk, opcode, val);
-                    }
-                    if (type < 8)
-                    {
-                        if (val != 0 && val != 1)
-                            return Reply(TmclStatus.InvalidValue, opcode, 0);
-                        _digitalOutputs[type] = val;
-                        return Reply(TmclStatus.SuccessOk, opcode, val);
-                    }
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                }
-                else if (motOrBank == 0 && type == 0)
-                {
-                    // Pull-up resistor configuration for STOP_L/STOP_R (SIO 0, 0, <0..3>)
-                    if (val < 0 || val > 3)
-                        return Reply(TmclStatus.InvalidValue, opcode, 0);
-                    _stopSwitchPullUpMask = val;
-                    return Reply(TmclStatus.SuccessOk, opcode, val);
-                }
-                return Reply(TmclStatus.WrongType, opcode, 0);
-
-            case TmclCommand.GIO:
-                if (motOrBank == 0) // Bank 0: Digital inputs (Ports 0..7 and 255)
-                {
-                    if (type == 255)
-                    {
-                        int mask = 0;
-                        for (int i = 0; i < 8; i++)
-                            if (_digitalInputs[i] != 0) mask |= (1 << i);
-                        return Reply(TmclStatus.SuccessOk, opcode, mask);
-                    }
-                    if (type < _digitalInputs.Length)
-                        return Reply(TmclStatus.SuccessOk, opcode, _digitalInputs[type]);
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                }
-                else if (motOrBank == 1) // Bank 1: Analog inputs (AIN0=0, AIN4=4, SupplyVoltage=8)
-                {
-                    if (type == 0)
-                        return Reply(TmclStatus.SuccessOk, opcode, _analogIn0);
-                    if (type == 4)
-                        return Reply(TmclStatus.SuccessOk, opcode, _analogIn4);
-                    if (type == 8)
-                        return Reply(TmclStatus.SuccessOk, opcode, _supplyVoltageDeciVolts);
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                }
-                else if (motOrBank == 2) // Bank 2: Digital outputs readback (Ports 0..7 and 255)
-                {
-                    if (type == 255)
-                    {
-                        int mask = 0;
-                        for (int i = 0; i < 8; i++)
-                            if (_digitalOutputs[i] != 0) mask |= (1 << i);
-                        return Reply(TmclStatus.SuccessOk, opcode, mask);
-                    }
-                    if (type < _digitalOutputs.Length)
-                        return Reply(TmclStatus.SuccessOk, opcode, _digitalOutputs[type]);
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                }
-                return Reply(TmclStatus.WrongType, opcode, 0);
-
-            case TmclCommand.SCO:
-                if (type > MaxCoordinateIndex)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (motOrBank == 255)
-                {
-                    for (int i = 0; i < TotalAxes; i++)
-                        _axes[i].CopyCoordinateRamToEeprom(type);
-                    return Reply(TmclStatus.SuccessOk, opcode, 0);
-                }
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                bool storeCoordEeprom = _globalParams.TryGetValue((0, 84), out int csSco) && csSco != 0;
-                _axes[motOrBank].SetCoordinate(type, val, storeCoordEeprom);
-                return Reply(TmclStatus.SuccessOk, opcode, val);
-
-            case TmclCommand.GCO:
-                if (type > MaxCoordinateIndex)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                if (motOrBank == 255)
-                {
-                    for (int i = 0; i < TotalAxes; i++)
-                        _axes[i].CopyCoordinateEepromToRam(type);
-                    return Reply(TmclStatus.SuccessOk, opcode, 0);
-                }
-                if (motOrBank >= TotalAxes)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                return Reply(TmclStatus.SuccessOk, opcode, _axes[motOrBank].GetCoordinate(type));
-
-            case TmclCommand.CCO:
-                if (motOrBank >= TotalAxes || type > MaxCoordinateIndex)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                bool storeCcoEeprom = _globalParams.TryGetValue((0, 84), out int csCco) && csCco != 0;
-                int captured = _axes[motOrBank].CaptureCoordinate(type, storeCcoEeprom);
-                return Reply(TmclStatus.SuccessOk, opcode, captured);
-
             case TmclCommand.CALC:
-                switch (type)
-                {
-                    case 0: _accumulator = unchecked(_accumulator + val); break;
-                    case 1: _accumulator = unchecked(_accumulator - val); break;
-                    case 2: _accumulator = unchecked(_accumulator * val); break;
-                    case 3:
-                        if (val == 0) return Reply(TmclStatus.InvalidValue, opcode, 0);
-                        _accumulator /= val;
-                        break;
-                    case 4:
-                        if (val == 0) return Reply(TmclStatus.InvalidValue, opcode, 0);
-                        _accumulator %= val;
-                        break;
-                    case 5: _accumulator &= val; break;
-                    case 6: _accumulator |= val; break;
-                    case 7: _accumulator ^= val; break;
-                    case 8: _accumulator = ~_accumulator; break;
-                    case 9: _accumulator = val; break;
-                    default: return Reply(TmclStatus.WrongType, opcode, 0);
-                }
-                return Reply(TmclStatus.SuccessOk, opcode, val);
+            {
+                var st = _vm.ExecuteDirectCalc(type, val);
+                return Reply(st, opcode, st == TmclStatus.SuccessOk ? val : 0);
+            }
 
-            case TmclCommand.ACO:
-                if (motOrBank >= TotalAxes || type > MaxCoordinateIndex)
-                    return Reply(TmclStatus.InvalidValue, opcode, 0);
-                bool storeAcoEeprom = _globalParams.TryGetValue((0, 84), out int csAco) && csAco != 0;
-                _axes[motOrBank].SetCoordinate(type, _accumulator, storeAcoEeprom);
-                return Reply(TmclStatus.SuccessOk, opcode, _accumulator);
+            case TmclCommand.CALCX:
+            {
+                var st = _vm.ExecuteDirectCalcX(type);
+                return Reply(st, opcode, st == TmclStatus.SuccessOk ? _vm.Accumulator : 0);
+            }
 
-            case TmclCommand.CLE:
-                if (type > 5)
+            case TmclCommand.CALCVV:
+            case TmclCommand.CALCVA:
+            case TmclCommand.CALCAV:
+            case TmclCommand.CALCVX:
+            case TmclCommand.CALCXV:
+            case TmclCommand.CALCV:
+            {
+                var st = _vm.ExecuteVarCalc(opcode, type, motOrBank, val, isDirectMode: true, out int calcReplyVal);
+                return Reply(st, opcode, st == TmclStatus.SuccessOk ? calcReplyVal : 0);
+            }
+
+            case TmclCommand.EI:
+                if (type != 255 && type >= TmclStandaloneVm.MaxInterruptCount)
                     return Reply(TmclStatus.WrongType, opcode, 0);
-                if (type == 0)
-                    _internalErrorFlags = 0;
-                else
-                    _internalErrorFlags &= ~(1 << (type - 1));
+                _vm.EnableInterrupt(type);
                 return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.DI:
+                if (type != 255 && type >= TmclStandaloneVm.MaxInterruptCount)
+                    return Reply(TmclStatus.WrongType, opcode, 0);
+                _vm.DisableInterrupt(type);
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            // Standalone-only flow / interrupt vector opcodes
+            case TmclCommand.COMP:
+            case TmclCommand.JC:
+            case TmclCommand.JA:
+            case TmclCommand.CSUB:
+            case TmclCommand.RSUB:
+            case TmclCommand.WAIT:
+            case TmclCommand.STOP:
+            case TmclCommand.VECT:
+            case TmclCommand.RETI:
+            case TmclCommand.RST:
+            case TmclCommand.DJNZ:
+            case TmclCommand.CALL:
+                return Reply(TmclStatus.CommandNotAvailable, opcode, 0);
+
+            // Control commands (128..138, 255)
+            case TmclCommand.StopApplication: // Cmd 128
+                _vm.Stop();
+                SyncVmGlobalParametersUnsafe();
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.RunApplication: // Cmd 129
+                if (type > 1)
+                    return Reply(TmclStatus.WrongType, opcode, 0);
+                if (type == 1 && (val < 0 || val >= _programMemory.Capacity))
+                    return Reply(TmclStatus.InvalidValue, opcode, 0);
+                _vm.Run(type == 1 ? val : null);
+                SyncVmGlobalParametersUnsafe();
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.StepApplication: // Cmd 130
+                if (_programMemory.IsDownloadMode)
+                    return Reply(TmclStatus.CommandNotAvailable, opcode, 0);
+                _vm.StepOnce();
+                SyncVmGlobalParametersUnsafe();
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.ResetApplication: // Cmd 131
+                _vm.ResetApplication();
+                _internalErrorFlags = 0;
+                SyncVmGlobalParametersUnsafe();
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.StartDownload: // Cmd 132
+                if ((GetGlobalParameterUnsafe(0, 81) & 2) != 0)
+                    return Reply(TmclStatus.ConfigurationEepromLocked, opcode, 0);
+                if (val < 0 || val >= _programMemory.Capacity)
+                    return Reply(TmclStatus.InvalidValue, opcode, 0);
+                if (_vm.Status == TmclAppStatus.Run)
+                    _vm.Stop();
+                _programMemory.StartDownload(val);
+                if (val == 0)
+                    _programRevision++;
+                SyncVmGlobalParametersUnsafe();
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.QuitDownload: // Cmd 133
+                _programMemory.QuitDownload();
+                _vm.ProgramCounter = 0;
+                SyncVmGlobalParametersUnsafe();
+                return Reply(TmclStatus.SuccessOk, opcode, 0);
+
+            case TmclCommand.ReadTmclMemory: // Cmd 134
+                if ((GetGlobalParameterUnsafe(0, 81) & 1) != 0)
+                    return Reply(TmclStatus.ConfigurationEepromLocked, opcode, 0);
+                if (!_programMemory.TryRead(val, out var slotInstr))
+                    return Reply(TmclStatus.InvalidValue, opcode, 0);
+                return TmclReplyPacket.CreateMemoryReadReply(
+                    replyAddr,
+                    modAddr,
+                    slotInstr.Opcode,
+                    slotInstr.Type,
+                    slotInstr.MotorOrBank,
+                    slotInstr.Value,
+                    GetAxisDisplayLabel);
+
+            case TmclCommand.GetAppStatus: // Cmd 135
+                return type switch
+                {
+                    0 => Reply(TmclStatus.SuccessOk, opcode, (int)_vm.Status),
+                    1 => Reply(TmclStatus.SuccessOk, opcode, _vm.ProgramCounter),
+                    2 => Reply(TmclStatus.SuccessOk, opcode, _vm.Accumulator),
+                    3 => Reply(TmclStatus.SuccessOk, opcode, _vm.XRegister),
+                    _ => Reply(TmclStatus.WrongType, opcode, 0)
+                };
 
             case TmclCommand.GetFirmwareVersion: // Cmd 136
                 if (type == 0)
@@ -614,6 +580,18 @@ public class Tmcm6110Controller : IMotionController
                 }
                 return Reply(TmclStatus.WrongType, opcode, 0);
 
+            case TmclCommand.RestoreFactorySettings: // Cmd 137
+                if (val == 1234)
+                {
+                    _programMemory.Clear();
+                    _programRevision++;
+                    for (int i = 0; i < TotalAxes; i++)
+                        _axes[i].ResetToDefaults(i);
+                    ResetGlobalParametersToDefaults();
+                    return Reply(TmclStatus.SuccessOk, opcode, 0);
+                }
+                return Reply(TmclStatus.InvalidValue, opcode, 0);
+
             case TmclCommand.RequestTargetPositionReachedEvent: // Cmd 138
                 if (type > 1)
                     return Reply(TmclStatus.WrongType, opcode, 0);
@@ -623,60 +601,6 @@ public class Tmcm6110Controller : IMotionController
                     _event138PendingMask = 0;
                 return Reply(TmclStatus.SuccessOk, opcode, val);
 
-            case TmclCommand.GetAppStatus: // Cmd 135
-                return type switch
-                {
-                    0 => Reply(TmclStatus.SuccessOk, opcode, GetGlobalParameterUnsafe(0, 128)),
-                    1 => Reply(TmclStatus.SuccessOk, opcode, GetGlobalParameterUnsafe(0, 130)),
-                    2 => Reply(TmclStatus.SuccessOk, opcode, _accumulator),
-                    3 => Reply(TmclStatus.SuccessOk, opcode, _xRegister),
-                    _ => Reply(TmclStatus.WrongType, opcode, 0)
-                };
-
-            case TmclCommand.StopApplication: // Cmd 128
-                _globalParams[(0, 128)] = 0;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.RunApplication: // Cmd 129
-                if (type > 1)
-                    return Reply(TmclStatus.WrongType, opcode, 0);
-                if (type == 1)
-                    _globalParams[(0, 130)] = val;
-                _globalParams[(0, 128)] = 1;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.StepApplication: // Cmd 130
-                _globalParams[(0, 128)] = 2;
-                _globalParams[(0, 130)] = GetGlobalParameterUnsafe(0, 130) + 1;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.ResetApplication: // Cmd 131
-                _globalParams[(0, 128)] = 3;
-                _globalParams[(0, 130)] = 0;
-                _accumulator = 0;
-                _xRegister = 0;
-                _internalErrorFlags = 0;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.StartDownload: // Cmd 132
-                _globalParams[(0, 129)] = 1;
-                _globalParams[(0, 130)] = val;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.QuitDownload: // Cmd 133
-                _globalParams[(0, 129)] = 0;
-                return Reply(TmclStatus.SuccessOk, opcode, 0);
-
-            case TmclCommand.RestoreFactorySettings: // Cmd 137
-                if (val == 1234)
-                {
-                    for (int i = 0; i < TotalAxes; i++)
-                        _axes[i].ResetToDefaults(i);
-                    ResetGlobalParametersToDefaults();
-                    return Reply(TmclStatus.SuccessOk, opcode, 0);
-                }
-                return Reply(TmclStatus.InvalidValue, opcode, 0);
-
             case TmclCommand.SoftwareReset: // Cmd 255
                 if (val != 1234)
                     return Reply(TmclStatus.InvalidValue, opcode, 0);
@@ -684,15 +608,447 @@ public class Tmcm6110Controller : IMotionController
                 return Reply(TmclStatus.SuccessOk, opcode, 0);
 
             default:
-                return Reply(TmclStatus.InvalidCommand, opcode, 0);
+            {
+                var hwStatus = ExecuteHardwareCommandUnsafe(
+                    opcode,
+                    type,
+                    motOrBank,
+                    val,
+                    isStandalone: false,
+                    out int directReplyVal,
+                    out _,
+                    out _);
+                return Reply(hwStatus, opcode, hwStatus == TmclStatus.SuccessOk ? directReplyVal : 0);
+            }
         }
 
         TmclReplyPacket Reply(TmclStatus st, byte op, int v) =>
             new(replyAddr, modAddr, st, op, v);
     }
 
-    private int GetGlobalParameterUnsafe(byte bank, byte param) =>
-        _globalParams.TryGetValue((bank, param), out int val) ? val : 0;
+    private TmclStatus ExecuteHardwareCommandUnsafe(
+        byte opcode,
+        byte type,
+        byte motOrBank,
+        int val,
+        bool isStandalone,
+        out int directReplyVal,
+        out int readResult,
+        out bool hasReadResult)
+    {
+        directReplyVal = 0;
+        readResult = 0;
+        hasReadResult = false;
+        int accu = _vm.Accumulator;
+        int xReg = _vm.XRegister;
+
+        switch ((TmclCommand)opcode)
+        {
+            case TmclCommand.ROR:
+                if (motOrBank >= TotalAxes || val < -2047 || val > 2047)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(motOrBank, ax => ax.RotateRight(val));
+                directReplyVal = val;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.ROL:
+                if (motOrBank >= TotalAxes || val < -2047 || val > 2047)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(motOrBank, ax => ax.RotateLeft(val));
+                directReplyVal = val;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.RORA:
+                if (motOrBank >= TotalAxes || accu < -2047 || accu > 2047)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(motOrBank, ax => ax.RotateRight(accu));
+                directReplyVal = accu;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.ROLA:
+                if (motOrBank >= TotalAxes || accu < -2047 || accu > 2047)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(motOrBank, ax => ax.RotateLeft(accu));
+                directReplyVal = accu;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.RORXA:
+                if (xReg < 0 || xReg >= TotalAxes || accu < -2047 || accu > 2047)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(xReg, ax => ax.RotateRight(accu));
+                directReplyVal = accu;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.ROLXA:
+                if (xReg < 0 || xReg >= TotalAxes || accu < -2047 || accu > 2047)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(xReg, ax => ax.RotateLeft(accu));
+                directReplyVal = accu;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.MST:
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(motOrBank, ax => ax.StopMotor());
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.MSTX:
+                if (xReg < 0 || xReg >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                ExecuteWithGroupIndex(xReg, ax => ax.StopMotor());
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.MVP:
+                return HandleMvpCommandUnsafe(type, motOrBank, val, out directReplyVal);
+
+            case TmclCommand.MVPA:
+                return HandleMvpCommandUnsafe(type, motOrBank, accu, out directReplyVal);
+
+            case TmclCommand.MVPXA:
+                if (xReg < 0 || xReg > 255)
+                    return TmclStatus.InvalidValue;
+                return HandleMvpCommandUnsafe(type, (byte)xReg, accu, out directReplyVal);
+
+            case TmclCommand.SAP:
+                return SetAxisParamChecked(motOrBank, type, val, out directReplyVal);
+
+            case TmclCommand.SAPX:
+                if (xReg < 0 || xReg >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                return SetAxisParamChecked(xReg, type, val, out directReplyVal);
+
+            case TmclCommand.AAP:
+                return SetAxisParamChecked(motOrBank, type, accu, out directReplyVal);
+
+            case TmclCommand.AAPX:
+                if (xReg < 0 || xReg >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                return SetAxisParamChecked(xReg, type, accu, out directReplyVal);
+
+            case TmclCommand.GAP:
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                if (!TmclAxisParam.IsValidParameter(type))
+                    return TmclStatus.WrongType;
+                readResult = _axes[motOrBank].GetParameter(type);
+                hasReadResult = true;
+                directReplyVal = readResult;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.GAPX:
+                if (xReg < 0 || xReg >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                if (!TmclAxisParam.IsValidParameter(type))
+                    return TmclStatus.WrongType;
+                readResult = _axes[xReg].GetParameter(type);
+                hasReadResult = true;
+                directReplyVal = readResult;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.STAP:
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                if (!TmclAxisParam.IsValidParameter(type) || TmclAxisParam.IsReadOnly(type))
+                    return TmclStatus.WrongType;
+                _axes[motOrBank].StoreParameterToEeprom(type);
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.RSAP:
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                if (!TmclAxisParam.IsValidParameter(type) || TmclAxisParam.IsReadOnly(type))
+                    return TmclStatus.WrongType;
+                _axes[motOrBank].RestoreParameterFromEeprom(type);
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.SGP:
+            {
+                var st = HandleSgpCommandUnsafe(type, motOrBank, val);
+                directReplyVal = val;
+                return st;
+            }
+
+            case TmclCommand.AGP:
+            {
+                var st = HandleSgpCommandUnsafe(type, motOrBank, accu);
+                directReplyVal = accu;
+                return st;
+            }
+
+            case TmclCommand.GGP:
+            {
+                var st = HandleGgpCommandUnsafe(type, motOrBank, out readResult);
+                if (st == TmclStatus.SuccessOk)
+                {
+                    hasReadResult = true;
+                    directReplyVal = readResult;
+                }
+                return st;
+            }
+
+            case TmclCommand.STGP:
+                if (motOrBank != 2)
+                    return TmclStatus.InvalidValue;
+                _userVarEeprom[type] = _globalParams.TryGetValue((2, type), out int uv) ? uv : 0;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.RSGP:
+                if (motOrBank != 2)
+                    return TmclStatus.InvalidValue;
+                _globalParams[(2, type)] = _userVarEeprom[type];
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.SIV:
+                if (xReg < 0 || xReg > 255)
+                    return TmclStatus.InvalidValue;
+                _globalParams[(2, (byte)xReg)] = val;
+                directReplyVal = val;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.GIV:
+                if (xReg < 0 || xReg > 255)
+                    return TmclStatus.InvalidValue;
+                readResult = GetGlobalParameterUnsafe(2, (byte)xReg);
+                hasReadResult = true;
+                directReplyVal = readResult;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.AIV:
+                if (xReg < 0 || xReg > 255)
+                    return TmclStatus.InvalidValue;
+                _globalParams[(2, (byte)xReg)] = accu;
+                directReplyVal = accu;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.RFS:
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                if (type == 0)
+                {
+                    ExecuteWithGroupIndex(motOrBank, ax => ax.StartReferenceSearch());
+                    return TmclStatus.SuccessOk;
+                }
+                if (type == 1)
+                {
+                    ExecuteWithGroupIndex(motOrBank, ax => ax.StopReferenceSearch());
+                    return TmclStatus.SuccessOk;
+                }
+                if (type == 2)
+                {
+                    readResult = _axes[motOrBank].GetReferenceSearchStatus();
+                    hasReadResult = true;
+                    directReplyVal = readResult;
+                    return TmclStatus.SuccessOk;
+                }
+                return TmclStatus.WrongType;
+
+            case TmclCommand.SIO:
+                if (motOrBank == 2)
+                {
+                    if (type == 255)
+                    {
+                        int outMask = val == -1 ? (accu & 0xFF) : val;
+                        if (outMask < 0 || outMask > 255)
+                            return TmclStatus.InvalidValue;
+                        for (int i = 0; i < 8; i++)
+                            _digitalOutputs[i] = (outMask & (1 << i)) != 0 ? 1 : 0;
+                        directReplyVal = val;
+                        return TmclStatus.SuccessOk;
+                    }
+                    if (type < 8)
+                    {
+                        if (val != 0 && val != 1)
+                            return TmclStatus.InvalidValue;
+                        _digitalOutputs[type] = val;
+                        directReplyVal = val;
+                        return TmclStatus.SuccessOk;
+                    }
+                    return TmclStatus.WrongType;
+                }
+                if (motOrBank == 0 && type == 0)
+                {
+                    if (val < 0 || val > 3)
+                        return TmclStatus.InvalidValue;
+                    _stopSwitchPullUpMask = val;
+                    directReplyVal = val;
+                    return TmclStatus.SuccessOk;
+                }
+                return TmclStatus.WrongType;
+
+            case TmclCommand.GIO:
+                return HandleGioCommandUnsafe(type, motOrBank, out readResult, out hasReadResult, out directReplyVal);
+
+            case TmclCommand.SCO:
+                if (type > MaxCoordinateIndex)
+                    return TmclStatus.InvalidValue;
+                if (motOrBank == 255)
+                {
+                    for (int i = 0; i < TotalAxes; i++)
+                        _axes[i].CopyCoordinateRamToEeprom(type);
+                    return TmclStatus.SuccessOk;
+                }
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                bool storeCoordEeprom = GetGlobalParameterUnsafe(0, 84) != 0;
+                _axes[motOrBank].SetCoordinate(type, val, storeCoordEeprom);
+                directReplyVal = val;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.GCO:
+                if (type > MaxCoordinateIndex)
+                    return TmclStatus.InvalidValue;
+                if (motOrBank == 255)
+                {
+                    for (int i = 0; i < TotalAxes; i++)
+                        _axes[i].CopyCoordinateEepromToRam(type);
+                    return TmclStatus.SuccessOk;
+                }
+                if (motOrBank >= TotalAxes)
+                    return TmclStatus.InvalidValue;
+                readResult = _axes[motOrBank].GetCoordinate(type);
+                hasReadResult = true;
+                directReplyVal = readResult;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.CCO:
+                if (motOrBank >= TotalAxes || type > MaxCoordinateIndex)
+                    return TmclStatus.InvalidValue;
+                bool storeCcoEeprom = GetGlobalParameterUnsafe(0, 84) != 0;
+                int captured = _axes[motOrBank].CaptureCoordinate(type, storeCcoEeprom);
+                directReplyVal = captured;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.ACO:
+                if (motOrBank >= TotalAxes || type > MaxCoordinateIndex)
+                    return TmclStatus.InvalidValue;
+                bool storeAcoEeprom = GetGlobalParameterUnsafe(0, 84) != 0;
+                _axes[motOrBank].SetCoordinate(type, accu, storeAcoEeprom);
+                directReplyVal = accu;
+                return TmclStatus.SuccessOk;
+
+            case TmclCommand.CLE:
+                if (type > 5)
+                    return TmclStatus.WrongType;
+                if (type == 0)
+                    _internalErrorFlags = 0;
+                else
+                    _internalErrorFlags &= ~(1 << (type - 1));
+                _vm.ClearErrorFlag(type);
+                return TmclStatus.SuccessOk;
+
+            default:
+                _ = isStandalone;
+                return TmclStatus.InvalidCommand;
+        }
+    }
+
+    private TmclStatus SetAxisParamChecked(int axisIndex, byte param, int value, out int replyVal)
+    {
+        replyVal = 0;
+        if (axisIndex < 0 || axisIndex >= TotalAxes)
+            return TmclStatus.InvalidValue;
+        if (!TmclAxisParam.IsValidParameter(param) || TmclAxisParam.IsReadOnly(param))
+            return TmclStatus.WrongType;
+        if (!TmclAxisParam.IsValueValid(param, value))
+            return TmclStatus.InvalidValue;
+
+        _axes[axisIndex].SetParameter(param, value);
+        replyVal = value;
+        return TmclStatus.SuccessOk;
+    }
+
+    private TmclStatus HandleGioCommandUnsafe(
+        byte port,
+        byte bank,
+        out int readResult,
+        out bool hasReadResult,
+        out int directReplyVal)
+    {
+        readResult = 0;
+        hasReadResult = false;
+        directReplyVal = 0;
+
+        if (bank == 0)
+        {
+            if (port == 255)
+            {
+                int mask = 0;
+                for (int i = 0; i < 8; i++)
+                    if (_digitalInputs[i] != 0) mask |= (1 << i);
+                readResult = mask;
+                hasReadResult = true;
+                directReplyVal = mask;
+                return TmclStatus.SuccessOk;
+            }
+            if (port < _digitalInputs.Length)
+            {
+                readResult = _digitalInputs[port];
+                hasReadResult = true;
+                directReplyVal = readResult;
+                return TmclStatus.SuccessOk;
+            }
+            return TmclStatus.WrongType;
+        }
+
+        if (bank == 1)
+        {
+            if (port == 0) readResult = _analogIn0;
+            else if (port == 4) readResult = _analogIn4;
+            else if (port == 8) readResult = _supplyVoltageDeciVolts;
+            else return TmclStatus.WrongType;
+
+            hasReadResult = true;
+            directReplyVal = readResult;
+            return TmclStatus.SuccessOk;
+        }
+
+        if (bank == 2)
+        {
+            if (port == 255)
+            {
+                int mask = 0;
+                for (int i = 0; i < 8; i++)
+                    if (_digitalOutputs[i] != 0) mask |= (1 << i);
+                readResult = mask;
+                hasReadResult = true;
+                directReplyVal = mask;
+                return TmclStatus.SuccessOk;
+            }
+            if (port < _digitalOutputs.Length)
+            {
+                readResult = _digitalOutputs[port];
+                hasReadResult = true;
+                directReplyVal = readResult;
+                return TmclStatus.SuccessOk;
+            }
+            return TmclStatus.WrongType;
+        }
+
+        return TmclStatus.WrongType;
+    }
+
+    private int GetGlobalParameterUnsafe(byte bank, byte param)
+    {
+        if (bank == 0)
+        {
+            if (param == 128) return (int)_vm.Status;
+            if (param == 129) return _programMemory.IsDownloadMode ? 1 : 0;
+            if (param == 130) return _programMemory.IsDownloadMode ? _programMemory.WritePointer : _vm.ProgramCounter;
+            if (param == 133) return _random.Next(0, int.MaxValue);
+        }
+        return _globalParams.TryGetValue((bank, param), out int val) ? val : 0;
+    }
+
+    private void HandleCodeProtectionChangeUnsafe(int newValue)
+    {
+        int oldVal = GetGlobalParameterUnsafe(0, 81);
+        bool wasReadProtected = (oldVal & 1) != 0;   // 1 or 3
+        bool willBeReadProtected = (newValue & 1) != 0; // 0 or 2 => false
+        if (wasReadProtected && !willBeReadProtected)
+        {
+            ClearProgramMemoryUnsafe();
+        }
+    }
 
     private void PerformSoftwareResetUnsafe()
     {
@@ -704,82 +1060,89 @@ public class Tmcm6110Controller : IMotionController
         for (int i = 0; i < 256; i++)
             _globalParams[(2, (byte)i)] = doNotRestoreVars ? 0 : _userVarEeprom[i];
 
-        _globalParams[(0, 128)] = 0;
-        _globalParams[(0, 129)] = 0;
-        _globalParams[(0, 130)] = 0;
+        // Preserve _programMemory across power-cycle reset (Cmd 255), exiting RAM download mode if active.
+        _programMemory.QuitDownload();
+        bool autoStart = GetGlobalParameterUnsafe(0, 77) != 0 && _programMemory.InstructionCount > 0;
+        _vm.ResetForPowerCycle(autoStart);
+
         _globalParams[(0, 132)] = 0;
         _globalParams[(0, 255)] = 0;
-
-        _accumulator = 0;
-        _xRegister = 0;
         _internalErrorFlags = 0;
         _event138Mask = 0;
         _event138Continuous = false;
         _event138PendingMask = 0;
+
+        SyncVmGlobalParametersUnsafe();
     }
 
-    private TmclReplyPacket HandleSgpCommandUnsafe(byte type, byte bank, int val)
+    private TmclStatus HandleSgpCommandUnsafe(byte type, byte bank, int val)
     {
-        byte opcode = (byte)TmclCommand.SGP;
         if (bank == 0)
         {
             if (!IsValidBank0GlobalParam(type) || IsReadOnlyBank0GlobalParam(type))
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.WrongType, opcode, 0);
+                return TmclStatus.WrongType;
             if (!IsBank0ValueValid(type, val))
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+                return TmclStatus.InvalidValue;
 
             if (type == 133)
                 _random = new Random(val);
+            if (type == 81)
+                HandleCodeProtectionChangeUnsafe(val);
+
             _globalParams[(0, type)] = val;
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+            return TmclStatus.SuccessOk;
         }
         if (bank == 2)
         {
             _globalParams[(2, type)] = val;
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+            return TmclStatus.SuccessOk;
         }
         if (bank == 3)
         {
             if (type <= 2)
             {
                 _globalParams[(3, type)] = val;
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+                return TmclStatus.SuccessOk;
             }
             if (type is >= 27 and <= 46)
             {
                 if (val < 0 || val > 3)
-                    return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+                    return TmclStatus.InvalidValue;
                 _globalParams[(3, type)] = val;
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+                return TmclStatus.SuccessOk;
             }
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.WrongType, opcode, 0);
+            return TmclStatus.WrongType;
         }
 
-        return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+        return TmclStatus.InvalidValue;
     }
 
-    private TmclReplyPacket HandleGgpCommandUnsafe(byte type, byte bank)
+    private TmclStatus HandleGgpCommandUnsafe(byte type, byte bank, out int val)
     {
-        byte opcode = (byte)TmclCommand.GGP;
+        val = 0;
         if (bank == 0)
         {
             if (!IsValidBank0GlobalParam(type))
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.WrongType, opcode, 0);
-            int val = type == 133 ? _random.Next(0, int.MaxValue) : GetGlobalParameterUnsafe(0, type);
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+                return TmclStatus.WrongType;
+            val = GetGlobalParameterUnsafe(0, type);
+            return TmclStatus.SuccessOk;
         }
         if (bank == 2)
         {
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, GetGlobalParameterUnsafe(2, type));
+            val = GetGlobalParameterUnsafe(2, type);
+            return TmclStatus.SuccessOk;
         }
         if (bank == 3)
         {
             if (type <= 2 || type is >= 27 and <= 46)
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, GetGlobalParameterUnsafe(3, type));
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.WrongType, opcode, 0);
+            {
+                val = GetGlobalParameterUnsafe(3, type);
+                return TmclStatus.SuccessOk;
+            }
+            return TmclStatus.WrongType;
         }
 
-        return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+        return TmclStatus.InvalidValue;
     }
 
     private static bool IsValidBank0GlobalParam(byte param) => param switch
@@ -816,32 +1179,34 @@ public class Tmcm6110Controller : IMotionController
             _event138Mask = 0;
     }
 
-    private TmclReplyPacket HandleMvpCommandUnsafe(byte type, byte motOrBank, int val)
+    private TmclStatus HandleMvpCommandUnsafe(byte type, byte motOrBank, int val, out int directReplyVal)
     {
-        byte opcode = (byte)TmclCommand.MVP;
+        directReplyVal = 0;
 
         if (type == 0) // MVP ABS
         {
             if (motOrBank >= TotalAxes)
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+                return TmclStatus.InvalidValue;
 
             int movedMask = ExecuteWithGroupIndex(motOrBank, ax => ax.MoveToAbsolute(val));
             ArmEvent138ForAxesUnsafe(movedMask);
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+            directReplyVal = val;
+            return TmclStatus.SuccessOk;
         }
         else if (type == 1) // MVP REL
         {
             if (motOrBank >= TotalAxes)
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+                return TmclStatus.InvalidValue;
 
             int movedMask = ExecuteWithGroupIndex(motOrBank, ax => ax.MoveRelative(val));
             ArmEvent138ForAxesUnsafe(movedMask);
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+            directReplyVal = val;
+            return TmclStatus.SuccessOk;
         }
         else if (type == 2) // MVP COORD
         {
             if (val < 0 || val > MaxCoordinateIndex)
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+                return TmclStatus.InvalidValue;
 
             // TMCM-6110 FW 1.47 Section 3.7.4:
             // Bit 6 (0x40) = Linear interpolation (max 3 motors; if >3 bits set, only first 3 are used).
@@ -908,7 +1273,8 @@ public class Tmcm6110Controller : IMotionController
                     }
                 }
                 ArmEvent138ForAxesUnsafe(startedMask);
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+                directReplyVal = val;
+                return TmclStatus.SuccessOk;
             }
             else if (motOrBank < TotalAxes)
             {
@@ -916,12 +1282,13 @@ public class Tmcm6110Controller : IMotionController
                 int targetCoord = _axes[motOrBank].GetCoordinate(val);
                 _axes[motOrBank].MoveToAbsolute(targetCoord);
                 ArmEvent138ForAxesUnsafe(1 << motOrBank);
-                return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.SuccessOk, opcode, val);
+                directReplyVal = val;
+                return TmclStatus.SuccessOk;
             }
-            return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.InvalidValue, opcode, 0);
+            return TmclStatus.InvalidValue;
         }
 
-        return new TmclReplyPacket(HostAddress, ModuleAddress, TmclStatus.WrongType, opcode, 0);
+        return TmclStatus.WrongType;
     }
 
     private int ExecuteWithGroupIndex(int targetAxisIndex, Action<AxisState> action)
@@ -945,4 +1312,23 @@ public class Tmcm6110Controller : IMotionController
         }
         return affectedMask;
     }
+
+    // Explicit ITmclVmHost implementation (invoked only under _controllerLock)
+    int ITmclVmHost.AxisCount => TotalAxes;
+    int ITmclVmHost.GetAxisParameterRaw(int axis, byte param) => _axes[axis].GetParameter(param, clearReadFlags: false);
+    int ITmclVmHost.GetReferenceSearchStatus(int axis) => _axes[axis].GetReferenceSearchStatus();
+    bool ITmclVmHost.GetDigitalInput(int port) => port >= 0 && port < _digitalInputs.Length && _digitalInputs[port] != 0;
+    int ITmclVmHost.GetGlobalParameterRaw(byte bank, byte param) => GetGlobalParameterUnsafe(bank, param);
+    void ITmclVmHost.SetUserVariableRaw(byte index, int value) => _globalParams[(2, index)] = value;
+    void ITmclVmHost.SyncErrorFlagsFromVm(int errorFlags) => _internalErrorFlags = errorFlags;
+
+    TmclStatus ITmclVmHost.ExecuteHardwareCommand(
+        byte opcode,
+        byte type,
+        byte motorOrBank,
+        int value,
+        bool isStandalone,
+        out int readResult,
+        out bool hasReadResult) =>
+        ExecuteHardwareCommandUnsafe(opcode, type, motorOrBank, value, isStandalone, out _, out readResult, out hasReadResult);
 }
