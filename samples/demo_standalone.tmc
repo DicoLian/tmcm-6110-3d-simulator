@@ -1,0 +1,126 @@
+// =============================================================================
+// TMCM-6110 3-Axis Gantry Standalone Demo Program (TMCL FW V1.47)
+//   Axis 0 = Z-Axis (Vertical)
+//   Axis 1 = Y-Axis (Gantry Carriage)
+//   Axis 2 = X-Axis (Gantry Bridge)
+//
+// Features demonstrated:
+//   - #define symbolic constants and comments
+//   - Timer 0 interrupt heartbeat (100 ms) toggling DOUT 0 via Bank 2 user var
+//   - Pick-and-place gantry cycle loop using SGP / DJNZ / MVP ABS / WAIT POS
+//   - Safe Z-retract subroutine (CSUB MoveSafeZ / RSUB) and dwell (WAIT TICKS)
+// =============================================================================
+
+// --- Axis Assignments ---
+#define AXIS_Z          0
+#define AXIS_Y          1
+#define AXIS_X          2
+
+// --- Motion Profile Parameters ---
+#define Z_SPEED         1500
+#define Z_ACCEL         800
+#define Y_SPEED         1800
+#define Y_ACCEL         1000
+#define X_SPEED         2000
+#define X_ACCEL         1000
+
+// --- Gantry Waypoints (microsteps) ---
+#define Z_SAFE_POS      0
+#define Z_PICK_POS      -15000
+#define Z_PLACE_POS     -12000
+#define Y_PICK_POS      18000
+#define Y_PLACE_POS     36000
+#define X_PICK_POS      24000
+#define X_PLACE_POS     45000
+
+// --- Timing & User Variable Assignments ---
+#define VAR_HEARTBEAT   1       // Bank 2 Var #1: DOUT 0 toggle state (0 or 1)
+#define DWELL_TICKS     20      // 20 ticks * 10 ms/tick = 200 ms dwell
+
+// =============================================================================
+// Initialization
+// =============================================================================
+SAP 4, AXIS_Z, Z_SPEED          // Z max positioning speed
+SAP 5, AXIS_Z, Z_ACCEL          // Z max acceleration
+SAP 4, AXIS_Y, Y_SPEED          // Y max positioning speed
+SAP 5, AXIS_Y, Y_ACCEL          // Y max acceleration
+SAP 4, AXIS_X, X_SPEED          // X max positioning speed
+SAP 5, AXIS_X, X_ACCEL          // X max acceleration
+
+// Configure Timer 0 (100 ms) heartbeat interrupt on DOUT 0
+SGP VAR_HEARTBEAT, 2, 0         // Clear heartbeat state variable
+SIO 0, 2, 0                     // Ensure DOUT 0 starts LOW
+VECT 0, TimerHeartbeat          // Register Timer 0 IRQ handler
+SGP 0, 3, 100                   // Bank 3 #0: Timer 0 period = 100 ms
+EI 0                            // Enable Timer 0 interrupt
+EI 255                          // Enable global interrupts
+
+// Run 2 pick-and-place cycles using Bank 2 User Variable #0 as loop counter
+SGP 0, 2, 2
+
+// =============================================================================
+// Main Pick-and-Place Cycle Loop
+// =============================================================================
+CycleLoop:
+    CSUB MoveSafeZ              // Retract Z to safe clearance height first
+
+    // Move X/Y to pick position
+    MVP ABS, AXIS_X, X_PICK_POS
+    MVP ABS, AXIS_Y, Y_PICK_POS
+    WAIT POS, AXIS_X, 0
+    WAIT POS, AXIS_Y, 0
+
+    // Plunge Z to pick, dwell 200 ms, then retract Z
+    MVP ABS, AXIS_Z, Z_PICK_POS
+    WAIT POS, AXIS_Z, 0
+    WAIT TICKS, 0, DWELL_TICKS
+    CSUB MoveSafeZ
+
+    // Move X/Y to place position
+    MVP ABS, AXIS_X, X_PLACE_POS
+    MVP ABS, AXIS_Y, Y_PLACE_POS
+    WAIT POS, AXIS_X, 0
+    WAIT POS, AXIS_Y, 0
+
+    // Plunge Z to place, dwell 200 ms, then retract Z
+    MVP ABS, AXIS_Z, Z_PLACE_POS
+    WAIT POS, AXIS_Z, 0
+    WAIT TICKS, 0, DWELL_TICKS
+    CSUB MoveSafeZ
+
+    DJNZ 0, CycleLoop           // Decrement Var #0; repeat while non-zero
+
+// =============================================================================
+// Park & Shutdown
+// =============================================================================
+MVP ABS, AXIS_X, 0              // Return X to origin
+MVP ABS, AXIS_Y, 0              // Return Y to origin
+WAIT POS, AXIS_X, 0
+WAIT POS, AXIS_Y, 0
+
+DI 255                          // Disable global interrupts cleanly
+SIO 0, 2, 0                     // Turn off DOUT 0 heartbeat LED
+STOP                            // Halt standalone TMCL execution
+
+// =============================================================================
+// Subroutine: MoveSafeZ
+// =============================================================================
+MoveSafeZ:
+    MVP ABS, AXIS_Z, Z_SAFE_POS
+    WAIT POS, AXIS_Z, 0
+    RSUB
+
+// =============================================================================
+// Interrupt Service Routine: TimerHeartbeat (IRQ 0, every 100 ms)
+// =============================================================================
+TimerHeartbeat:
+    GGP VAR_HEARTBEAT, 2        // Read Bank 2 heartbeat state into Accumulator
+    CALC XOR, 1                 // Toggle bit 0 (0 <-> 1)
+    AGP VAR_HEARTBEAT, 2        // Store updated state back to Bank 2 Var #1
+    COMP 0                      // Check whether new state is 0
+    JC EQ, HeartbeatLow         // Branch to clear DOUT 0 if 0
+    SIO 0, 2, 1                 // Set DOUT 0 HIGH
+    RETI
+HeartbeatLow:
+    SIO 0, 2, 0                 // Set DOUT 0 LOW
+    RETI
