@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.IO.Ports;
 using System.Net.Sockets;
+using Tmcm6110.Core.Engine;
 using Tmcm6110.Core.Protocol;
 
 namespace Tmcm6110.HostTester;
@@ -12,6 +14,7 @@ namespace Tmcm6110.HostTester;
 /// 2. Default Axis Mapping: Axis 0 (Z), Axis 1 (Y), Axis 2 (X)
 /// 3. Status polling: Idle, Move, PosReached (#8), +Limit (#10), -Limit (#11), Alarm (#207/#208)
 /// 4. Command 138 Asynchronous Position Reached Event (Status=100 immediate + Status=128 on arrival)
+/// 5. TMCL-IDE Program Download (Cmd 132/133), ReadTmclMemory (Cmd 134), and Standalone VM (Cmd 128..131)
 /// </summary>
 internal class Program
 {
@@ -114,6 +117,7 @@ internal class Program
             Console.WriteLine("  [4] Reference Search RFS START / 原點復歸 (Mode 65 +Limit Homing)");
             Console.WriteLine("  [5] Soft Stop MST / 全軸緩減速停止");
             Console.WriteLine("  [6] FW 1.47 Info (Cmd 136), Clear #207 Auto-Clear, CLE & Software Reset (Cmd 255)");
+            Console.WriteLine("  [7] TMCL-IDE Download & Standalone Run Demo (Cmd 132 -> Read 134 -> Run 129)");
             Console.WriteLine("  [Q] Quit / 離開");
             Console.Write("Select / 請選擇 > ");
 
@@ -191,7 +195,109 @@ internal class Program
                     SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, (byte)TmclCommand.CLE, 0, 0, 0));
                     SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, (byte)TmclCommand.SoftwareReset, 0, 0, 1234));
                     break;
+
+                case "7":
+                    await RunStandaloneDownloadDemoAsync(sendAndReceive, moduleAddr);
+                    break;
             }
+        }
+    }
+
+    private static async Task RunStandaloneDownloadDemoAsync(Func<byte[], byte[]> sendAndReceive, byte moduleAddr)
+    {
+        Console.WriteLine("  --- TMCL-IDE Program Download (Cmd 132/133), Readback (Cmd 134) & Standalone Run (Cmd 129) ---");
+
+        const string source = """
+            // Short 3-axis standalone sequence (Axis 0=Z, Axis 1=Y, Axis 2=X)
+            SAP 4, 0, 1500
+            SAP 4, 1, 1800
+            SAP 4, 2, 2000
+            MVP ABS, 0, -10000
+            MVP ABS, 1, 15000
+            MVP ABS, 2, 18000
+            WAIT POS, 0, 0
+            WAIT POS, 1, 0
+            WAIT POS, 2, 0
+            WAIT TICKS, 0, 20
+            MVP ABS, 0, 0
+            MVP ABS, 1, 0
+            MVP ABS, 2, 0
+            WAIT POS, 0, 0
+            WAIT POS, 1, 0
+            WAIT POS, 2, 0
+            STOP
+            """;
+
+        var asm = TmclAssembler.Assemble(source, moduleAddr);
+        if (!asm.Success)
+        {
+            Console.WriteLine("  [ERROR] Assembly failed: " + string.Join("; ", asm.Errors));
+            return;
+        }
+
+        // 1. Stop any running application, then StartDownload (Cmd 132)
+        SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, (byte)TmclCommand.StopApplication, 0, 0, 0));
+        var startAck = SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, (byte)TmclCommand.StartDownload, 0, 0, 0));
+        if (startAck.StatusEnum != TmclStatus.SuccessOk)
+        {
+            Console.WriteLine($"  [ABORT] StartDownload rejected with {startAck.StatusEnum} (check #81 code protection).");
+            return;
+        }
+
+        // 2. Stream assembled instructions + Opcode 0 end marker (each returns Status=101)
+        foreach (var pkt in asm.Packets)
+        {
+            var slotAck = SendCmd(sendAndReceive, pkt);
+            if (slotAck.StatusEnum != TmclStatus.CommandLoadedIntoEeprom)
+            {
+                Console.WriteLine($"  [ABORT] Unexpected status during download: {slotAck.StatusEnum}");
+                return;
+            }
+        }
+        SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, 0, 0, 0, 0));
+        SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, (byte)TmclCommand.QuitDownload, 0, 0, 0));
+
+        // 3. Verify downloaded slots via Cmd 134 (ReadTmclMemory)
+        // NOTE: Cmd 134 returns a special 9-byte reply [Host, Mod, Op, Type, Mot, V3, V2, V1, V0] with NO checksum byte.
+        Console.WriteLine("  --- Verifying program slots via Cmd 134 (special 9-byte no-checksum reply) ---");
+        for (int addr = 0; addr <= asm.Packets.Count; addr++)
+        {
+            var req = new TmclCommandPacket(moduleAddr, (byte)TmclCommand.ReadTmclMemory, 0, 0, addr);
+            byte[] raw = sendAndReceive(req.ToBytes());
+            var memReply = new TmclReplyPacket(raw, TmclRawReplyKind.ProgramMemorySlot);
+
+            byte expectedOp = addr < asm.Packets.Count ? asm.Packets[addr].Command : (byte)0;
+            byte expectedType = addr < asm.Packets.Count ? asm.Packets[addr].TypeNumber : (byte)0;
+            byte expectedMot = addr < asm.Packets.Count ? asm.Packets[addr].MotorOrBank : (byte)0;
+            int expectedVal = addr < asm.Packets.Count ? asm.Packets[addr].Value : 0;
+
+            if (raw[2] != expectedOp || raw[3] != expectedType || raw[4] != expectedMot || memReply.Value != expectedVal)
+            {
+                Console.WriteLine($"  [MISMATCH @ {addr:D4}] RX={memReply.ToHexString()} ({memReply.ToDescription()})");
+                return;
+            }
+
+            Console.WriteLine($"  [{addr:D4}] RX <- {memReply.ToHexString()}  ({memReply.ToDescription()})");
+        }
+
+        // 4. Start standalone execution at address 0 (Cmd 129 Type=1) and poll until STOP
+        SendCmd(sendAndReceive, new TmclCommandPacket(moduleAddr, (byte)TmclCommand.RunApplication, 1, 0, 0));
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 15000)
+        {
+            var statusReply = TmclReplyPacket.FromBytes(
+                sendAndReceive(new TmclCommandPacket(moduleAddr, (byte)TmclCommand.GetAppStatus, 0, 0, 0).ToBytes()));
+            var pcReply = TmclReplyPacket.FromBytes(
+                sendAndReceive(new TmclCommandPacket(moduleAddr, (byte)TmclCommand.GetAppStatus, 1, 0, 0).ToBytes()));
+            int posZ = QueryGap(sendAndReceive, moduleAddr, TmclAxisParam.ActualPosition, 0);
+            int posY = QueryGap(sendAndReceive, moduleAddr, TmclAxisParam.ActualPosition, 1);
+            int posX = QueryGap(sendAndReceive, moduleAddr, TmclAxisParam.ActualPosition, 2);
+
+            Console.WriteLine($"  [VM Status={statusReply.Value} ({(TmclAppStatus)statusReply.Value}), PC={pcReply.Value}] Z={posZ,7} | Y={posY,7} | X={posX,7}");
+            if (statusReply.Value == (int)TmclAppStatus.Stop)
+                break;
+
+            await Task.Delay(100);
         }
     }
 
@@ -202,12 +308,13 @@ internal class Program
         return TmclReplyPacket.FromBytes(rx).Value;
     }
 
-    private static void SendCmd(Func<byte[], byte[]> sendRecv, TmclCommandPacket pkt)
+    private static TmclReplyPacket SendCmd(Func<byte[], byte[]> sendRecv, TmclCommandPacket pkt)
     {
         Console.WriteLine($"  TX -> {pkt.ToHexString()}  ({pkt.ToMnemonicDescription()})");
         byte[] rx = sendRecv(pkt.ToBytes());
         var reply = TmclReplyPacket.FromBytes(rx);
         Console.WriteLine($"  RX <- {reply.ToHexString()}  ({reply.ToDescription()})");
+        return reply;
     }
 
     private static void RunAutomatedSelfTest()
@@ -366,6 +473,94 @@ internal class Program
             throw new Exception($"Expected RAM coordinate reset to 0 after Cmd 255, got {ramCoordAfterReset}");
         Console.WriteLine("[PASS] Verified Cmd 255 Software Reset (1234).");
 
+        // 6. Verify Phases 1-3: Download (132/101/133 + 134), Standalone VM (129 + WAIT POS + STOP), Interrupts & Step (130)
+        // Phase 1 & 2: Download + Readback (134) + RunApplication (129)
+        var vmAsm = TmclAssembler.Assemble("""
+            SAP 4, 2, 2000
+            MVP ABS, 2, 1200
+            WAIT POS, 2, 0
+            WAIT TICKS, 0, 5
+            SGP 0, 2, 321
+            STOP
+            """);
+        if (!vmAsm.Success)
+            throw new Exception("Self-test Phase 2 assembly failed: " + string.Join("; ", vmAsm.Errors));
+
+        controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.StopApplication, 0, 0, 0));
+        if (controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.StartDownload, 0, 0, 0)).StatusEnum != TmclStatus.SuccessOk)
+            throw new Exception("Cmd 132 StartDownload failed.");
+        if (controller.GetGlobalParameter(0, 129) != 1 || !controller.GetStandaloneSnapshot().IsDownloadMode)
+            throw new Exception("Global Param #129 should be 1 during download mode.");
+
+        for (int i = 0; i < vmAsm.Packets.Count; i++)
+        {
+            var dlReply = controller.ProcessCommand(vmAsm.Packets[i]);
+            if (dlReply.StatusEnum != TmclStatus.CommandLoadedIntoEeprom || dlReply.Value != i)
+                throw new Exception($"Download instruction {i} failed: {dlReply.StatusEnum}");
+        }
+        if (controller.ProcessCommand(new TmclCommandPacket(1, 0, 0, 0, 0)).StatusEnum != TmclStatus.CommandLoadedIntoEeprom)
+            throw new Exception("Download end-marker (Opcode 0) did not return Status=101.");
+        if (controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.QuitDownload, 0, 0, 0)).StatusEnum != TmclStatus.SuccessOk)
+            throw new Exception("Cmd 133 QuitDownload failed.");
+        if (controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.GGP, 129, 0, 0)).Value != 0)
+            throw new Exception("GGP 129 should be 0 after QuitDownload.");
+
+        // Cmd 134 special 9-byte readback check on slot 1 (MVP ABS, 2, 1200)
+        var memReadReply = controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.ReadTmclMemory, 0, 0, 1));
+        byte[] memRaw = memReadReply.ToBytes();
+        if (memRaw[2] != (byte)TmclCommand.MVP || memRaw[4] != 2 || memReadReply.Value != 1200 || !memReadReply.ToDescription().StartsWith("MemRead:", StringComparison.Ordinal))
+            throw new Exception($"Cmd 134 readback mismatch: {memReadReply.ToHexString()} ({memReadReply.ToDescription()})");
+
+        // Run standalone program via Cmd 129
+        controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.RunApplication, 1, 0, 0));
+        for (int i = 0; i < 300 && controller.GetStandaloneSnapshot().Status != TmclAppStatus.Stop; i++)
+            controller.StepSimulation(0.01);
+
+        int axis2StandalonePos = controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.GAP, TmclAxisParam.ActualPosition, 2, 0)).Value;
+        int standaloneVar0 = controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.GGP, 0, 2, 0)).Value;
+        if (controller.GetStandaloneSnapshot().Status != TmclAppStatus.Stop || axis2StandalonePos != 1200 || standaloneVar0 != 321)
+            throw new Exception($"Phase 2 standalone run failed: Status={controller.GetStandaloneSnapshot().Status}, X={axis2StandalonePos}, Var0={standaloneVar0}");
+
+        // Phase 3: Timer 0 Interrupt (VECT/EI/RETI) + StepApplication (Cmd 130)
+        var irqAsm = TmclAssembler.Assemble("""
+            SGP 0, 2, 0
+            VECT 0, TimerIsr
+            SGP 0, 3, 20
+            EI 0
+            EI 255
+            WAIT TICKS, 0, 10
+            DI 255
+            STOP
+            TimerIsr:
+                CALCV ADD, 0, 1
+                RETI
+            """);
+        if (!irqAsm.Success)
+            throw new Exception("Self-test Phase 3 assembly failed.");
+
+        controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.StartDownload, 0, 0, 0));
+        foreach (var pkt in irqAsm.Packets)
+            controller.ProcessCommand(pkt);
+        controller.ProcessCommand(new TmclCommandPacket(1, 0, 0, 0, 0));
+        controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.QuitDownload, 0, 0, 0));
+
+        // StepApplication (Cmd 130) single-stepping
+        if (controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.StepApplication, 0, 0, 0)).StatusEnum != TmclStatus.SuccessOk)
+            throw new Exception("Cmd 130 StepApplication failed.");
+        if (controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.GetAppStatus, 0, 0, 0)).Value != (int)TmclAppStatus.Step ||
+            controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.GetAppStatus, 1, 0, 0)).Value != 1)
+            throw new Exception("Cmd 130 did not advance PC to 1 with Status=Step.");
+
+        // Resume from stepped PC (1) via Cmd 129 Type 0 and run 100ms
+        controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.RunApplication, 0, 0, 0));
+        for (int i = 0; i < 50 && controller.GetStandaloneSnapshot().Status != TmclAppStatus.Stop; i++)
+            controller.StepSimulation(0.01);
+
+        int timerTicksCount = controller.ProcessCommand(new TmclCommandPacket(1, (byte)TmclCommand.GGP, 0, 2, 0)).Value;
+        if (controller.GetStandaloneSnapshot().Status != TmclAppStatus.Stop || timerTicksCount < 4)
+            throw new Exception($"Phase 3 Timer IRQ / Step failed: Status={controller.GetStandaloneSnapshot().Status}, TimerCount={timerTicksCount}");
+
+        Console.WriteLine($"[PASS] Verified Phases 1-3: Download/Readback (Cmd 132/101/133/134), Standalone VM (X={axis2StandalonePos}, Var0={standaloneVar0}), Timer0 IRQ ({timerTicksCount} ticks) & Step (Cmd 130).");
         Console.WriteLine("=== ALL SELF-TESTS PASSED SUCCESSFULLY ===");
     }
 }

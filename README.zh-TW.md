@@ -28,6 +28,7 @@
 
 - 9-Byte Binary TMCL 封包格式與 8-bit 累加 Checksum 驗證（嚴格依循 [`TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf`](./TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf)，版本 `6110V147`）
 - `SAP`、`GAP`、`MVP`、`RFS`、`SCO`/`GCO`/`CCO`/`ACO`、`SIO`/`GIO`、`Cmd 138`、`Cmd 255` 等指令流程與嚴格參數範圍／唯讀檢查
+- **TMCL-IDE 程式下載與獨立執行（Standalone VM）**：完整 2048-slot EEPROM 程式記憶體（`Cmd 132`/`133` 回應 `Status=101`、`Cmd 134` 記憶體回讀、`#81` 程式碼保護）、獨立執行 VM（`16..57`、`80`、`Cmd 128..131`、`#77` AutoStart）、47 向量中斷控制器（`VECT`/`EI`/`DI`/`RETI`）與內建雙階段組譯器 `TmclAssembler`
 - TCP／Serial COM 主從通訊、`GAP 8` 輪詢、`#87` 次要串列位址、`#255` 關閉主動回覆，以及先布防 `Cmd 138` 的非同步到位推播
 - 1～6 軸運動控制（32-bit 位置、單次最多 3 軸 `Bit 6` 線性插補）、極限與原點開關、StallGuard2（`#207` 讀取自動清除）／TMC262（`#208`）異常與 `RFS`（Mode `1..8`、`+64`、`+128`）回原點流程
 - 自有上位機介面、運動控制邏輯或自動化測試腳本
@@ -41,7 +42,7 @@
 
 1. 前往 [GitHub Releases](https://github.com/DicoLian/tmcm-6110-3d-simulator/releases) 下載最新的 `win-x64` `.zip` 壓縮檔並解壓縮。
 2. 執行 `Tmcm6110.App.exe` 啟動 3D 模擬器（會自動於 `127.0.0.1:4001` 啟動本機 TCP Server）。
-3. 執行 `Tmcm6110.HostTester.exe` 並選擇 **`[2]`**（本機 TCP `127.0.0.1:4001`，預設選項），即可立即看到 3D 龍門機構開始移動。
+3. 執行 `Tmcm6110.HostTester.exe` 並選擇 **`[2]`**（本機 TCP `127.0.0.1:4001`，預設選項），即可立即看到 3D 龍門機構開始移動（可選擇 **`[7]`** 執行 TMCL-IDE 程式下載與 Standalone VM 展示）。
 
 > **提示**：由於開源釋出的執行檔尚未使用商業憑證簽章，首次執行時 Windows SmartScreen 可能會跳出警告，請確認來源後選擇 **「其他資訊 → 仍要執行」**。
 
@@ -63,7 +64,7 @@ dotnet run --project src/Tmcm6110.App
 dotnet run --project src/Tmcm6110.HostTester
 ```
 
-執行協定自動化自我測試：
+執行協定自動化自我測試（涵蓋 Standalone 下載、VM 與中斷驗證）：
 
 ```powershell
 dotnet run --project src/Tmcm6110.HostTester -- --self-test
@@ -77,10 +78,27 @@ dotnet run --project src/Tmcm6110.HostTester -- --self-test
 
 - 完整解析與組裝 9-Byte Binary TMCL 封包，支援 8-bit 累加 Checksum 驗證
 - 支援 Serial COM（`com0com`／VSPD，鮑率支援至 `230400`）與免驅動本機 TCP `127.0.0.1:4001` 雙傳輸通道
-- 即時 RX／TX 9-Byte Hex 封包監控、TMCL 指令反組譯與高頻輪詢過濾（`GAP`/`GGP`/`GIO`/`RFS STATUS`）
+- 即時 RX／TX 9-Byte Hex 封包監控、TMCL 指令反組譯（含 Standalone 指令 `16..57`、`80`、控制指令 `128..134` 與 `Cmd 134` `"MemRead:"` 特殊 9-Byte 回覆）以及高頻輪詢過濾（`GAP`/`GGP`/`GIO`/`RFS STATUS`）
 - 支援滑動視窗封包同步、異常封包偵測、可調式 `ModAddr (#66)`／`HostAddr (#76)` 位址、次要位址 `#87` 與抑制回覆 `#255`
 - 支援 `GAP 8` 輪詢與 FW V1.47 **運動前預先布防** `Cmd 138` 非同步到位推播（`Type=0` 單次／`Type=1` 連續；即時回覆 `Status=100` + 到位主動推播 `Status=128`）
 - 無論畫面設定為幾軸，底層始終保留完整 6 軸暫存器（`Axis 0..5`），確保上位機全軸輪詢絕不 Timeout
+
+### TMCL-IDE 程式下載、Standalone VM 與中斷控制器
+
+- **TMCL-IDE 程式下載與 EEPROM 記憶體 (`TmclProgramMemory`)**：
+  - 2048-slot EEPROM 程式記憶體，完整實作 TMCL-IDE 下載流程（`Cmd 128 Stop -> Cmd 132 StartDownload -> 各指令與結束碼 Opcode 0 皆回傳 Status=101 -> Cmd 133 QuitDownload`），同步維護 `#129` 下載模式與 `#130` 寫入指標，下載期間 `< 128` 指令僅寫入記憶體而不立即執行
+  - `ReadTmclMemory (Cmd 134)` 依 FW V1.47 Section 3.2 回傳無 Checksum 之特殊 9-Byte 封包 `[Host, Mod, Op, Type, Mot, V3..V0]`
+  - `#81` 程式碼保護（`1`=讀取鎖定、`2`=寫入鎖定、`3`=雙向鎖定；依 Table 18 從 `1`/`3` 解除為 `0`/`2` 時自動清除已下載程式）；`Cmd 255` 保留程式記憶體，而 `Cmd 137` 會清除程式記憶體
+- **獨立執行 TMCL 虛擬機 (`TmclStandaloneVm`)**：
+  - 完整支援 Standalone 與 FW V1.45+ 指令（`16..57`、`80`）：`CALC`/`CALCX`/`COMP`/`JC`（`ZE..EPO`）、`JA`/`CSUB`/`RSUB`/`CALL`（8 層呼叫堆疊與溢位保護）、`RST`/`DJNZ`、`AAP`/`AGP`/`ACO`、`CALCV*`（`CALCVV/VA/AV/VX/XV/V`）、暫存器/索引運動（`MVPA/MVPXA/ROLA/RORA/ROLXA/RORXA/MSTX/SAPX/GAPX/AAPX`）與索引變數（`SIV/GIV/AIV`）
+  - 精確 **10 ms/tick** `WAIT` 等待引擎（`TICKS`、`POS`、`REFSW`、`LIMSW`、`RFS`，支援 `Value == -1` 讀取 `Accumulator` 延遲與事件逾時設定 `ETO` 旗標）
+  - 支援執行與單步除錯控制（`Cmd 128 Stop`、`Cmd 129 Run`、`Cmd 130 Step`、`Cmd 131 Reset`、`Cmd 135 GetAppStatus Types 0..3`）、`#77 AutoStart` 開機自動執行，以及直連模式 `GAP`/`GGP`/`GIO`/`GCO` 與 VM `Accumulator` 嚴格隔離
+- **47 向量中斷控制器 (`VECT 37`, `EI 25`, `DI 26`, `RETI 38`)**：
+  - 支援 IRQ `0..2`（Bank 3 `#0..#2` 毫秒週期計時器）、`3..8`（到達目標位置）、`15..20`（StallGuard 異常）、`27..38`（極限開關邊緣觸發，Bank 3 `#27..#38`）與 `39..46`（數位輸入邊緣觸發，Bank 3 `#39..#46`，支援 `1=上升沿`、`2=下降沿`、`3=雙邊緣`）
+  - 依 IRQ 編號優先權派送（編號越小優先權越高），並於 `RETI` 完整還原 `PC`、`Accumulator`、`XRegister`、比較旗標與進行中的 `WAIT` 狀態
+- **內建雙階段組譯器 (`TmclAssembler`) 與範例腳本**：
+  - 支援 `//`／`;` 註解、`#define` 與 `NAME = VALUE` 常數（十進位、負數、`0x`、`$` 十六進位）、前後向與行內標籤、符號化軸參數／運算子／條件名稱、全部 FW V1.47 指令（`SIV=55`、`GIV=56`、`AIV=57`、`CALL=80`）與含行號的語法錯誤診斷
+  - 隨附三軸取放循環範例 [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc)，包含 100 ms Timer 0 中斷切換 `DOUT 0` 心跳燈
 
 ### 模擬運動控制
 
@@ -97,7 +115,7 @@ dotnet run --project src/Tmcm6110.HostTester -- --self-test
 - 內建 12 種機台與龍門場景（依啟用軸數動態篩選），支援滑鼠拖曳旋轉、滾輪縮放與視角重置
 - 提供 5 種 XY 原點與 3 種 Z 軸原點預設（可選同步更新 `RFS #193` 搜尋方向），以及各軸獨立 `-Limit / +Limit (mm)` 行程設定
 - 啟動時自動偵測系統語系，並可於執行期間即時切換繁體中文／英文介面
-- 支援手動與自動載入 TMCL-IDE `.ini`、`.tmc` 與軸向對應 `.txt` 設定檔
+- 支援手動與自動載入 TMCL-IDE `.ini`、`.tmc` 與軸向對應 `.txt` 設定檔，並提供 **Tab 3（`TMCL 程式 / Standalone VM`）** 即時 VM 監控、`.tmc` 組譯下載與反組譯單步除錯介面
 
 ---
 
@@ -115,12 +133,14 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
 
 | 類別 | 支援指令與參數功能（FW V1.47） |
 | :--- | :--- |
-| **運動控制** | 有號 `ROR (1)`／`ROL (2)`（`-2047..2047`）、緩減速停止 `MST (3)`、32-bit `MVP (4)`（`ABS`、`REL`、`COORD` `0x40\|mask` 單次最多 **3 軸**線性插補、`0x80\|mask` 不限軸數同動啟動） |
-| **參數存取** | 嚴格驗證 `SAP (5)`、`GAP (6)`、`STAP (7)`、`RSAP (8)`、`SGP (9)`、`GGP (10)`、`STGP (11)`、`RSGP (12)`（已移除 `SAC 29`；嚴格區分 Bank 0/2/3） |
+| **運動控制** | 有號 `ROR (1)`／`ROL (2)`（`-2047..2047`）、緩減速停止 `MST (3)`、32-bit `MVP (4)`（`ABS`、`REL`、`COORD` `0x40\|mask` 單次最多 **3 軸**線性插補、`0x80\|mask` 不限軸數同動啟動）、`MVPA (46)`、`MVPXA (47)`、`ROLA (50)`、`RORA (51)`、`ROLXA (52)`、`RORXA (53)`、`MSTX (54)` |
+| **參數存取** | 嚴格驗證 `SAP (5)`、`GAP (6)`、`STAP (7)`、`RSAP (8)`、`SGP (9)`、`GGP (10)`、`STGP (11)`、`RSGP (12)`，以及索引／累加器存取 `SAPX (16)`、`GAPX (17)`、`AAPX (18)`、`AAP (34)`、`AGP (35)`、`SIV (55)`、`GIV (56)`、`AIV (57)`（已移除 `SAC 29`；嚴格區分 Bank 0/2/3） |
 | **原點搜尋** | `RFS (13)`（`START` / `STOP` / `STATUS`），支援 Mode `1..8`、`+64`、`+128`，`#194/#195`（`0..2047`）、`#196` EndSwitchDistance、`#197` LastReferencePosition |
 | **I/O 與座標** | `SIO (14)`／`GIO (15)`（`0..7` DI/DO、12-bit `AIN0(0)`/`AIN4(4)`、`Port 8` 供電電壓 `240`=24.0V、`SIO 0,0,0..3` 上拉電阻）；座標 `0..20`（`SCO 30`、`GCO 31`、`CCO 32`、`ACO 39`、`255` 批次複製、`#84`） |
-| **系統與事件** | `CLE (36)`（獨立錯誤旗標 `0..5`）、`Cmd 128..133` 程式狀態、`GetAppStatus (135)`（`Type 0..3`）、`GetFirmwareVersion (136)`（`"6110V147"`／`0x17DE012F`）、`RestoreFactorySettings (137)`（`1234` 無回覆）、預先布防 `RequestTargetPositionReachedEvent (138)`（`Type 0/1`）、`SoftwareReset (255)`（`1234`） |
-| **常用軸 / 全域參數** | Axis（Table 16）：32-bit 位置 (`#0/#1`)、速度/加減速 (`#2/#3/#4/#5/#135`)、電流 (`#6/#7` `0..255`)、到位 (`#8`)、原點/極限開關 (`#9/#10/#11`, `#12/#13`)、微步 (`#140` `0..8`)、限位緩停 (`#149`)、CoolStep/SG2 (`#180/#181/#206`)、讀取自動清除 `#207`、TMC262 `#208`；Global：鮑率 `#65`、`ModAddr #66`、`HostAddr #76`、次要位址 `#87`、亂數 `#133`、關閉回覆 `#255`、Bank 2 (`0..255`)、Bank 3 (`0..2`, `27..46`) |
+| **Standalone VM 與流程** | `CALC (19)`（`0..9`）、`COMP (20)`、`JC (21)`（`ZE..EPO`）、`JA (22)`、`CSUB (23)`、`RSUB (24)`、`WAIT (27)`（`10 ms/tick`：`TICKS/POS/REFSW/LIMSW/RFS` 與 `ETO` 逾時）、`STOP (28)`、`CALCX (33)`（`0..10`）、`CALCVV (40)`、`CALCVA (41)`、`CALCAV (42)`、`CALCVX (43)`、`CALCXV (44)`、`CALCV (45)`、`RST (48)`、`DJNZ (49)`、`CALL (80)`（8 層呼叫堆疊） |
+| **中斷控制（47 向量）** | `EI (25)`、`DI (26)`、`VECT (37)`、`RETI (38)`：支援 IRQ `0..2`（計時器）、`3..8`（到位）、`15..20`（StallGuard）、`27..38`（極限邊緣 `1/2/3`）、`39..46`（數位輸入邊緣 `1/2/3`）；編號越小優先權越高；`RETI` 完整還原 `WAIT` 與暫存器上下文 |
+| **下載與系統控制** | `Stop (128)`、`Run (129)`、`Step (130)`、`Reset (131)`、`StartDownload (132)`／`QuitDownload (133)`（`Status=101`）、`ReadTmclMemory (134)`（特殊 9-Byte 回覆、`#81` 鎖定）、`GetAppStatus (135)`（`Type 0..3`）、`GetFirmwareVersion (136)`（`"6110V147"`／`0x17DE012F`）、`RestoreFactorySettings (137)`（`1234` 無回覆並清除程式）、預先布防 `RequestTargetPositionReachedEvent (138)`（`Type 0/1`）、`CLE (36)`（`0..5`）、`SoftwareReset (255)`（`1234` 保留程式並支援 `#77` AutoStart） |
+| **常用軸 / 全域參數** | Axis（Table 16）：32-bit 位置 (`#0/#1`)、速度/加減速 (`#2/#3/#4/#5/#135`)、電流 (`#6/#7` `0..255`)、到位 (`#8`)、原點/極限開關 (`#9/#10/#11`, `#12/#13`)、微步 (`#140` `0..8`)、限位緩停 (`#149`)、CoolStep/SG2 (`#180/#181/#206`)、讀取自動清除 `#207`、TMC262 `#208`；Global：鮑率 `#65`、`ModAddr #66`、`HostAddr #76`、`AutoStart #77`、`CodeProtection #81`、次要位址 `#87`、`AppStatus #128`、`DownloadMode #129`、`PC #130`、亂數 `#133`、關閉回覆 `#255`、Bank 2 (`0..255`)、Bank 3 (`0..2`, `27..46`) |
 
 > **相容性提醒（對比舊版 `TMCL_reference.pdf` V2.22）：** 若現有上位機依舊版通用手冊撰寫，改為 FW V1.47 模式後需注意：`Cmd 138` 須於 `MVP` **之前**布防、`MST` 為緩減速停止、`MVP COORD Bit 6` 上限為 3 軸、`Cmd 136` 回傳 `6110V147` / `0x17DE012F`、`#207` 讀取即自動清除、`CLE` 不清除 TMC262 致命保護、座標擴大至 `0..20`，且已移除 `SAC (29)` 與舊版參數（`#64`、`#73`、`#141/#142/#147/#151/#205/#209..#212`）。
 
@@ -148,7 +168,7 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
 > **內部 6 軸暫存器完整保留**：即使畫面只啟用 1～5 軸，`Axis 0~5` 在底層 TMCL 引擎仍持續運作與回應，確保既有上位機輪詢不中斷。
 
 <details>
-<summary><strong>展開完整操作介面與互動控制說明（頂部連線列、3D 視窗、Tab 1/2、封包監控）</strong></summary>
+<summary><strong>展開完整操作介面與互動控制說明（頂部連線列、3D 視窗、Tab 1/2/3、封包監控）</strong></summary>
 
 1. **頂部連線與全局快捷列**：
    - **Serial COM 連線區**：COM Port 選擇、**`重新掃描`**、鮑率（`9600`～`230400`）、**`開啟 Serial Port 監聽`** 與即時 Serial / TCP 狀態指示燈。
@@ -165,7 +185,11 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
    - **各軸移動行程與極限開關 (mm)**：設定全局 **`Steps/mm 換算`**、各軸 `-Limit` / `+Limit (mm)` 區間（即時顯示換算步數）與 **`極限停機 (#12/#13)`** 開關。
    - **TMCL 節點位址與傳輸資訊**：調整 **`ModAddr(#66)`** 與 **`HostAddr(#76)`**，檢視本機 TCP `127.0.0.1:4001` 監聽狀態。
    - **設定檔載入與介面語系**：**`載入設定 (.ini / .tmc)`** 按鈕、已載入設定摘要與 **`🌐 EN / 繁中`** 即時語系切換。
-5. **底部 9-Byte Binary 封包監控與即時反組譯**：
+5. **右側分頁 Tab 3 — `TMCL 程式 / Standalone VM`**：
+   - **VM 狀態與暫存器**：彩色狀態徽章（`DOWNLOAD`、`RUN`、`WAIT`、`STEP`、`RESET`/`STOP`）、`WAIT` 等待細節與中斷指示（`IRQ #n ACTIVE`／`IRQ ON`／`IRQ OFF`），以及即時暫存器（`PC`、`指令數`、`Accu`、`X Reg`、`Stack 0..8`、`錯誤旗標`、`保護 (#81)`、`已執行指令數`）。
+   - **下載與執行控制**：**`載入並下載 (.tmc)`**（透過 `TmclAssembler` 組譯並依 `Cmd 128 -> 132 -> Status 101 -> 0 -> 133` 流程寫入 EEPROM，同時於底部紀錄完整 9-Byte 封包）、**`▶ 執行 (129)`**、**`⏭ 單步 (130)`**、**`■ 停止 (128)`**、**`↺ 重置 (131)`**、**`清除 EEPROM`** 與 **`開機自動執行 (#77)`** 核取方塊。
+   - **程式記憶體反組譯檢視**：即時顯示 `PC` `▶` 指標、`位址 (Addr)`、7-Byte `Hex` 與 `TMCL 反組譯助記詞`。
+6. **底部 9-Byte Binary 封包監控與即時反組譯**：
    - 即時呈現 RX/TX 9-Byte Hex 封包與 TMCL 指令反組譯、**累計接收封包數**、高頻輪詢過濾勾選（`GAP`/`GGP`/`GIO`/`RFS STATUS`）、**`清除全部 Alarm`** 與 **`清空封包紀錄`**。
 
 </details>
@@ -179,15 +203,17 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
    - 在 `Tmcm6110.App` **頂部連線列**選擇 `COM11` 與鮑率（如 `9600` 或 `115200`），確認 **Tab 2（機台與系統設定）** 的 `ModAddr(#66)=1`、`HostAddr(#76)=2`，點擊 **`開啟 Serial Port 監聽`**。
    - 將您的上位機（或內附 `Tmcm6110.HostTester`）連線至 `COM10` 即可開始雙向通訊。
 2. **透過本機 TCP (`127.0.0.1:4001`)**：
-   - 直接執行 `Tmcm6110.HostTester`（或 `dotnet run --project src/Tmcm6110.HostTester`）並選擇 **`[2]`**，免安裝任何虛擬串口驅動即可測試所有指令與 `Cmd 138` 非同步推播。
+   - 直接執行 `Tmcm6110.HostTester`（或 `dotnet run --project src/Tmcm6110.HostTester`）並選擇 **`[2]`**，免安裝任何虛擬串口驅動即可測試所有指令與 `Cmd 138` 非同步推播（選擇 **`[7]`** 可互動執行 TMCL-IDE 下載、`Cmd 134` 回讀與 Standalone VM 三軸展示）。
 
 ### 載入自訂參數檔（.ini / .tmc / 軸向定義 .txt）
 
 - 可於 **Tab 2（機台與系統設定）→ `載入設定 (.ini / .tmc)`** 手動載入 TMCL-IDE 匯出的 `.ini`、`.tmc` (`SAP`/`SGP`) 腳本或軸向定義 `.txt` 檔；若啟動目錄或上層目錄存在相符的 `.ini` 或軸向定義檔，程式啟動時也會自動偵測套用。
+- 可於 **Tab 3（TMCL 程式 / Standalone VM）→ `載入並下載 (.tmc)`** 組譯並下載完整的 Standalone TMCL 程式（支援標籤、`#define` 常數、副程式、`WAIT` 與中斷服務常式）至 EEPROM 程式記憶體。
 - 軸向定義 `.txt` 可透過 `axis <n> (...) <LABEL>` 格式（例如 `axis 0 (1st Axis) Z`、`axis 1 (2nd Axis) Y`、`axis 2 (3rd Axis) X`）自動同步前三軸的 3D 角色對映。
-- 專案內附可直接試用的公開範例設定檔：
+- 專案內附可直接試用的公開範例設定與程式檔：
   - [`samples/demo_gantry.ini`](./samples/demo_gantry.ini) — 通用三軸龍門參數預設檔（`[module_settings_axis%0..2]` 與 `[global_settings]`）。
   - [`samples/demo_gantry.tmc`](./samples/demo_gantry.tmc) — 通用 `SAP` / `SGP` 初始化腳本。
+  - [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) — 三軸取放循環 Standalone TMCL 範例程式，展示 `CSUB`/`RSUB`、`DJNZ`、`WAIT POS`/`WAIT TICKS` 與 100 ms Timer 0 `DOUT 0` 心跳中斷。
 - `.gitignore` 預設排除所有私人 `*.ini`、`*.tmc` 與機台軸向定義檔（僅追蹤 `samples/*.ini` 與 `samples/*.tmc` 公開範例），確保客戶敏感參數不會被上傳至公開儲存庫。
 
 ## 專案結構與運作流程
@@ -198,7 +224,8 @@ src/
 │   ├── Abstractions/       IMotionController、IMotionAxis、IProtocolAdapter、Telemetry
 │   ├── Protocol/           TmclProtocolAdapter、TmclPacket、TmclDefinitions
 │   ├── Transport/          ByteStreamTransportServer（TCP / Serial COM）、TmclSerialServer
-│   ├── Engine/             Tmcm6110Controller、AxisState、AxisRoleMap
+│   ├── Engine/             Tmcm6110Controller、AxisState、AxisRoleMap、
+│   │                       TmclProgramMemory、TmclStandaloneVm、TmclAssembler
 │   └── Config/             TmcmConfigLoader（.ini / .tmc / 軸向對應 .txt 載入）
 ├── Tmcm6110.App/
 │   ├── ViewModels/         MainViewModel、AxisViewModel
@@ -206,12 +233,13 @@ src/
 │   └── Resources/          Strings.zh-TW.xaml、Strings.en-US.xaml 與 Localization/
 └── Tmcm6110.HostTester/    上位機測試工具與協定自動自我測試（--self-test）
 
-samples/                    公開三軸龍門範例設定檔（demo_gantry.ini、demo_gantry.tmc）
+samples/                    公開三軸龍門範例設定與獨立程式檔（demo_gantry.ini/.tmc、demo_standalone.tmc）
 tests/
-└── Tmcm6110.Core.Tests/    xUnit 單元測試（封包、控制器、極限/異常、軸角色對映、設定、解耦）
+└── Tmcm6110.Core.Tests/    xUnit 單元測試（封包、控制器、極限/異常、軸角色對映、設定、解耦、
+                            程式下載與記憶體、Standalone VM、中斷與除錯、雙階段組譯器）
 ```
 
-`ByteStreamTransportServer` 負責透過 TCP 或 Serial COM 收送位元串流，`TmclProtocolAdapter` 進行 9-Byte Binary TMCL 封包解析與回應分派，再交由 `Tmcm6110Controller` 執行運動運算並更新各軸狀態；最後由 WPF ViewModel 讀取控制器即時位置、速度、極限與 Alarm 狀態並驅動 `IMachine3DScene` 更新 3D 機台畫面。
+`ByteStreamTransportServer` 負責透過 TCP 或 Serial COM 收送位元串流，`TmclProtocolAdapter` 進行 9-Byte Binary TMCL 封包解析與回應分派，再交由 `Tmcm6110Controller` 更新各軸運動狀態、管理 `TmclProgramMemory` 程式記憶體，並驅動 `TmclStandaloneVm` 與 47 向量中斷控制器；`TmclAssembler` 負責將 `.tmc` 原始碼組譯為 9-Byte 指令封包，而 WPF ViewModel 則即時讀取控制器軸向與 VM 狀態，驅動 `IMachine3DScene` 3D 畫面與 Tab 3 反組譯除錯器。
 
 ## 客製化開發與專案合作洽詢
 

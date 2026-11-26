@@ -28,6 +28,7 @@ It lets developers verify and debug host integrations before hardware is ready:
 
 - 9-Byte Binary TMCL packet framing and 8-bit additive checksum validation strictly aligned with [`TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf`](./TMCM-6110-TMCL_firmware_manual_fw1.47_rev1.23.pdf) (`6110V147`)
 - Common command workflows (`SAP`, `GAP`, `MVP`, `RFS`, `SCO`/`GCO`/`CCO`/`ACO`, `SIO`/`GIO`, `Cmd 138`, `Cmd 255`) and strict parameter range/read-only validation
+- **TMCL-IDE Program Download & Standalone VM**: Full 2048-slot EEPROM program memory (`Cmd 132`/`133` with `Status=101`, `Cmd 134` memory readback, `#81` code protection), standalone VM (`16..57`, `80`, `Cmd 128..131`, `#77` AutoStart), 47-vector interrupt controller (`VECT`/`EI`/`DI`/`RETI`), and built-in two-pass `TmclAssembler`
 - TCP / Serial COM master-slave communication, `GAP 8` status polling, `#87` secondary serial address, `#255` reply suppression, and pre-armed `Cmd 138` position-reached events
 - 1–6 axis motion (32-bit positions, up to 3-axis `Bit 6` linear interpolation per command), limit/home switches, StallGuard2 (`#207` auto-clear) & TMC262 (`#208`) faults, and RFS homing sequences (`1..8`, `+64`, `+128`)
 - Custom host UI, motion-control logic, or automated test scripts
@@ -41,7 +42,7 @@ Built with C# / .NET 8.0 and native WPF as a Windows **Digital Twin & Virtual Co
 
 1. Download the latest `win-x64` `.zip` from [GitHub Releases](https://github.com/DicoLian/tmcm-6110-3d-simulator/releases) and extract it.
 2. Run `Tmcm6110.App.exe` to launch the 3D simulator (automatically starts the local TCP server on `127.0.0.1:4001`).
-3. Run `Tmcm6110.HostTester.exe` and choose **`[2]`** (Local TCP `127.0.0.1:4001`, default) to watch the 3D gantry move immediately.
+3. Run `Tmcm6110.HostTester.exe` and choose **`[2]`** (Local TCP `127.0.0.1:4001`, default) to watch the 3D gantry move immediately (try `[7]` for the TMCL-IDE Download & Standalone VM demo).
 
 > **Note:** Because open-source release binaries are unsigned, Windows SmartScreen may show a warning on first launch—click **More info → Run anyway**.
 
@@ -63,7 +64,7 @@ In a second terminal, run the host tester (choose `[2]` for Local TCP `127.0.0.1
 dotnet run --project src/Tmcm6110.HostTester
 ```
 
-Run the automated protocol self-test:
+Run the automated protocol self-test (including Standalone Download, VM, and Interrupt checks):
 
 ```powershell
 dotnet run --project src/Tmcm6110.HostTester -- --self-test
@@ -77,10 +78,27 @@ dotnet run --project src/Tmcm6110.HostTester -- --self-test
 
 - Full 9-Byte Binary TMCL packet parsing/assembly with 8-bit additive checksum validation
 - Dual transport via Serial COM (`com0com` / VSPD, up to `230400` baud) and zero-driver Local TCP `127.0.0.1:4001`
-- Real-time RX/TX 9-byte hex Packet Sniffer with mnemonic disassembly and high-frequency polling filter (`GAP`/`GGP`/`GIO`/`RFS STATUS`)
+- Real-time RX/TX 9-byte hex Packet Sniffer with mnemonic disassembly (including standalone opcodes `16..57`, `80`, control commands `128..134`, and `Cmd 134` `"MemRead:"` special 9-byte replies) plus high-frequency polling filter (`GAP`/`GGP`/`GIO`/`RFS STATUS`)
 - Sliding-window packet synchronization, malformed-packet detection, configurable `ModAddr (#66)` / `HostAddr (#76)`, Secondary Serial Address (`#87`), and Suppress Reply (`#255`)
 - Supports both `GAP 8` polling and FW V1.47 pre-armed `Cmd 138` asynchronous position-reached events (`Type=0` next move one-shot / `Type=1` continuous; `Status=100` ACK + unsolicited `Status=128`)
 - Retains all 6 internal axis registers (`Axis 0..5`) even when UI is configured for 1–5 active axes so multi-axis host polling never times out
+
+### TMCL-IDE Program Download, Standalone VM & Interrupt Controller
+
+- **TMCL-IDE Download & EEPROM Memory (`TmclProgramMemory`)**:
+  - 2048-slot EEPROM program memory with exact TMCL-IDE wire sequence (`Cmd 128 Stop -> Cmd 132 StartDownload -> instructions + Opcode 0 returning Status=101 -> Cmd 133 QuitDownload`), `#129` Download Mode & `#130` Write Pointer tracking, and non-execution of commands `< 128` while downloading
+  - `ReadTmclMemory (Cmd 134)` returning the FW V1.47 Section 3.2 special 9-byte no-checksum payload `[Host, Mod, Op, Type, Mot, V3..V0]`
+  - `#81` Code Protection (`1`=read lock, `2`=write lock, `3`=both, erasing program memory on `1/3 -> 0/2` unprotect per Table 18); `Cmd 255` preserves program memory while `Cmd 137` erases it
+- **Standalone TMCL Virtual Machine (`TmclStandaloneVm`)**:
+  - Full standalone & FW V1.45+ instruction execution (`16..57`, `80`): `CALC`/`CALCX`/`COMP`/`JC` (`ZE..EPO`), `JA`/`CSUB`/`RSUB`/`CALL` (8-level call stack with overflow guard), `RST`/`DJNZ`, `AAP`/`AGP`/`ACO`, `CALCV*` (`CALCVV/VA/AV/VX/XV/V`), indexed/accumulator motion (`MVPA/MVPXA/ROLA/RORA/ROLXA/RORXA/MSTX/SAPX/GAPX/AAPX`), and indexed variables (`SIV/GIV/AIV`)
+  - Accurate **10 ms/tick** `WAIT` engine (`TICKS`, `POS`, `REFSW`, `LIMSW`, `RFS`, plus `Accumulator` ticks when `Value == -1` and `ETO` timeout flag on event timeouts)
+  - Execution & debugger controls (`Cmd 128 Stop`, `Cmd 129 Run`, `Cmd 130 Step`, `Cmd 131 Reset`, `Cmd 135 GetAppStatus Types 0..3`), `#77 AutoStart` on `Cmd 255` reset, and strict direct-mode `Accumulator` isolation for `GAP`/`GGP`/`GIO`/`GCO`
+- **47-Vector Interrupt Controller (`VECT 37`, `EI 25`, `DI 26`, `RETI 38`)**:
+  - `0..2` periodic millisecond timers (Bank 3 `#0..#2`), `3..8` Target Position Reached, `15..20` StallGuard alarms, `27..38` stop switch edge triggers (Bank 3 `#27..#38`), and `39..46` digital input edge triggers (Bank 3 `#39..#46`, supporting `1=rising`, `2=falling`, `3=both`)
+  - Priority dispatch (lowest IRQ ID wins) with full context save/restore (`PC`, `Accumulator`, `XRegister`, flags, and active `WAIT` state) on `RETI`
+- **Built-In Two-Pass Assembler (`TmclAssembler`) & Sample Script**:
+  - Supports `//`/`;` comments, `#define` and `NAME = VALUE` constants (decimal, negative, `0x`, `$`), forward/backward & inline labels, symbolic axis parameter/operator/condition names, all FW V1.47 commands (`SIV=55, GIV=56, AIV=57, CALL=80`), and line-numbered diagnostics
+  - Includes ready-to-run 3-axis pick-and-place standalone demo [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) with a 100 ms Timer 0 `DOUT 0` heartbeat ISR
 
 ### Simulated Motion Control
 
@@ -97,7 +115,7 @@ dotnet run --project src/Tmcm6110.HostTester -- --self-test
 - 12 built-in machine & gantry scenes filtered by active axis count (`1..6`), with mouse orbit/zoom and camera reset
 - 5 XY origin presets & 3 Z origin presets (with optional `RFS #193` direction sync), plus per-axis `-Limit / +Limit (mm)` travel bounds
 - Auto-detects Windows locale on startup with a runtime English / Traditional Chinese UI switch
-- Loads TMCL-IDE `.ini`, `.tmc`, and axis-mapping `.txt` configuration files
+- Loads TMCL-IDE `.ini`, `.tmc`, and axis-mapping `.txt` configuration files, plus **Tab 3 (`TMCL Program / VM`)** live Standalone VM monitor, `.tmc` assembler/downloader, and disassembly debugger
 
 ---
 
@@ -115,12 +133,14 @@ Implemented commands and key parameters include:
 
 | Category | Supported Commands / Parameters (FW V1.47) |
 | :--- | :--- |
-| **Motion** | Signed `ROR (1)` / `ROL (2)` (`-2047..2047`), Soft-Stop `MST (3)`, 32-bit `MVP (4)` (`ABS`, `REL`, `COORD` `0x40\|mask` up to **3-axis** linear interpolation, `0x80\|mask` unlimited multi-axis start) |
-| **Parameters** | Strictly validated `SAP (5)`, `GAP (6)`, `STAP (7)`, `RSAP (8)`, `SGP (9)`, `GGP (10)`, `STGP (11)`, `RSGP (12)` (`SAC 29` removed; Bank 0/2/3 enforced) |
+| **Motion** | Signed `ROR (1)` / `ROL (2)` (`-2047..2047`), Soft-Stop `MST (3)`, 32-bit `MVP (4)` (`ABS`, `REL`, `COORD` `0x40\|mask` up to **3-axis** linear interpolation, `0x80\|mask` unlimited multi-axis start), `MVPA (46)`, `MVPXA (47)`, `ROLA (50)`, `RORA (51)`, `ROLXA (52)`, `RORXA (53)`, `MSTX (54)` |
+| **Parameters** | Strictly validated `SAP (5)`, `GAP (6)`, `STAP (7)`, `RSAP (8)`, `SGP (9)`, `GGP (10)`, `STGP (11)`, `RSGP (12)`, plus indexed/accu `SAPX (16)`, `GAPX (17)`, `AAPX (18)`, `AAP (34)`, `AGP (35)`, `SIV (55)`, `GIV (56)`, `AIV (57)` (`SAC 29` removed; Bank 0/2/3 enforced) |
 | **Reference Search** | `RFS (13)` (`START`, `STOP`, `STATUS`) with Modes `1..8`, `+64`, `+128`, `#194/#195` (`0..2047`), `#196` EndSwitchDistance, `#197` LastReferencePosition |
 | **I/O & Coordinates** | `SIO (14)` / `GIO (15)` (`0..7` DI & DO, 12-bit `AIN0(0)`/`AIN4(4)`, `Port 8` supply voltage `240` = 24.0 V, `SIO 0,0,0..3` pull-ups); Coordinates `0..20` (`SCO 30`, `GCO 31`, `CCO 32`, `ACO 39`, `255` batch copy, `#84`) |
-| **System & Events** | `CLE (36)` (standalone flags `0..5`), `Cmd 128..133` app control, `GetAppStatus (135)` (`Types 0..3`), `GetFirmwareVersion (136)` (`"6110V147"` / `0x17DE012F`), `RestoreFactorySettings (137)` (`1234`, no reply), Pre-armed `RequestTargetPositionReachedEvent (138)` (`Type 0/1`), `SoftwareReset (255)` (`1234`) |
-| **Key Axis / Global Params** | Axis (Table 16): 32-bit Pos (`#0/#1`), Speed/Accel (`#2/#3/#4/#5/#135`), Current (`#6/#7` `0..255`), InPos (`#8`), Home/Limit Switches (`#9/#10/#11`, `#12/#13`), Microstep (`#140` `0..8`), SoftStopFlag (`#149`), CoolStep/SG2 (`#180/#181/#206`), Auto-clear `#207`, TMC262 `#208`; Global: `Baud (#65)`, `ModAddr (#66)`, `HostAddr (#76)`, `SecAddr (#87)`, `Random (#133)`, `SuppressReply (#255)`, Bank 2 (`0..255`), Bank 3 (`0..2`, `27..46`) |
+| **Standalone VM & Flow** | `CALC (19)` (`0..9`), `COMP (20)`, `JC (21)` (`ZE..EPO`), `JA (22)`, `CSUB (23)`, `RSUB (24)`, `WAIT (27)` (`10 ms/tick`: `TICKS/POS/REFSW/LIMSW/RFS`, `ETO`), `STOP (28)`, `CALCX (33)` (`0..10`), `CALCVV (40)`, `CALCVA (41)`, `CALCAV (42)`, `CALCVX (43)`, `CALCXV (44)`, `CALCV (45)`, `RST (48)`, `DJNZ (49)`, `CALL (80)` (8-level call stack) |
+| **Interrupts (47 Vectors)** | `EI (25)`, `DI (26)`, `VECT (37)`, `RETI (38)`: IRQs `0..2` (Timers), `3..8` (PosReached), `15..20` (StallGuard), `27..38` (Stop switches `1/2/3`), `39..46` (Digital inputs `1/2/3`); lower IRQ ID = higher priority; `WAIT` & register context preserved across `RETI` |
+| **Download & System** | `Stop (128)`, `Run (129)`, `Step (130)`, `Reset (131)`, `StartDownload (132)` / `QuitDownload (133)` (`Status=101`), `ReadTmclMemory (134)` (9-byte special reply, `#81` lock), `GetAppStatus (135)` (`Types 0..3`), `GetFirmwareVersion (136)` (`"6110V147"` / `0x17DE012F`), `RestoreFactorySettings (137)` (`1234`, no reply, erases program), Pre-armed `RequestTargetPositionReachedEvent (138)` (`Type 0/1`), `CLE (36)` (`0..5`), `SoftwareReset (255)` (`1234`, preserves program & honors `#77` AutoStart) |
+| **Key Axis / Global Params** | Axis (Table 16): 32-bit Pos (`#0/#1`), Speed/Accel (`#2/#3/#4/#5/#135`), Current (`#6/#7` `0..255`), InPos (`#8`), Home/Limit Switches (`#9/#10/#11`, `#12/#13`), Microstep (`#140` `0..8`), SoftStopFlag (`#149`), CoolStep/SG2 (`#180/#181/#206`), Auto-clear `#207`, TMC262 `#208`; Global: `Baud (#65)`, `ModAddr (#66)`, `HostAddr (#76)`, `AutoStart (#77)`, `CodeProtection (#81)`, `SecAddr (#87)`, `AppStatus (#128)`, `DownloadMode (#129)`, `PC (#130)`, `Random (#133)`, `SuppressReply (#255)`, Bank 2 (`0..255`), Bank 3 (`0..2`, `27..46`) |
 
 > **Compatibility Note for Legacy `TMCL_reference.pdf` (V2.22) Hosts:** Compared to legacy V2.22 behavior, FW V1.47 enforces **pre-MVP** arming for `Cmd 138`, soft-decelerating `MST`, max 3-axis `Bit 6` interpolation, `"6110V147"` / `0x17DE012F` version IDs, `#207` auto-clear on read, `CLE` restricted to standalone flags, `0..20` coordinates, and rejects obsolete opcodes/parameters (`SAC 29`, `#64`, `#73`, `#141/#142/#147/#151/#205/#209..#212`).
 
@@ -148,7 +168,7 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
 > **Internal 6-Axis Register Retention**: Even when configured for 1–5 active axes in the UI, `Axis 0..5` remain active in the TMCL protocol engine so multi-axis host startup and polling never fail.
 
 <details>
-<summary><strong>Expand Full UI Workspace & Interactive Controls Guide (Top Bar, 3D Viewport, Tab 1/2, Packet Sniffer)</strong></summary>
+<summary><strong>Expand Full UI Workspace & Interactive Controls Guide (Top Bar, 3D Viewport, Tab 1/2/3, Packet Sniffer)</strong></summary>
 
 1. **Top Connection & Motion Bar**:
    - **Serial COM Controls**: COM port selector, **`Rescan`**, baud rate (`9600`–`230400`), **`Open Serial Port`**, and live Serial / TCP listening status indicator.
@@ -165,7 +185,11 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
    - **Per-Axis Travel Stroke & Limit Stop (mm)**: Edit `Steps/mm`, per-axis `-Limit` / `+Limit` positions (mm, showing converted microstep bounds), and `#12/#13` hardware limit-stop enable checkboxes.
    - **TMCL Node Addressing & Transport**: Edit `ModAddr(#66)` and `HostAddr(#76)` and monitor local TCP listening status (`127.0.0.1:4001`).
    - **Configuration File & UI Language**: **`Load .ini / .tmc`** configuration button, loaded summary banner, and **`🌐 EN / 繁中`** runtime language switch.
-5. **Bottom 9-Byte Binary Packet Sniffer**:
+5. **Right Panel — Tab 3 (`TMCL Program / VM`)**:
+   - **VM Status & Registers**: Color-coded state badge (`DOWNLOAD`, `RUN`, `WAIT`, `STEP`, `RESET`/`STOP`), live `WAIT` detail & IRQ indicator (`IRQ #n ACTIVE` / `IRQ ON` / `IRQ OFF`), and numerical registers (`PC`, `Instructions`, `Accu`, `X Reg`, `Stack 0..8`, `ErrFlags`, `Prot #81`, `Executed`).
+   - **Download & Execution Controls**: **`Load & Download (.tmc)`** (assembles `.tmc` via `TmclAssembler` and executes the TMCL-IDE `Cmd 128 -> 132 -> Status 101 -> 0 -> 133` wire download with full Packet Sniffer trace), **`▶ Run (129)`**, **`⏭ Step (130)`**, **`■ Stop (128)`**, **`↺ Reset (131)`**, **`Clear EEPROM`**, and **`AutoStart (#77)`** toggle.
+   - **Program Memory Disassembly**: Live instruction table (`PC` `▶` pointer, `Addr`, 7-byte `Hex`, and `TMCL Mnemonic`) tracking real-time execution.
+6. **Bottom 9-Byte Binary Packet Sniffer**:
    - Real-time RX/TX 9-byte hex log with TMCL mnemonic disassembly, **Total RX Packets** counter, polling packet filter (`GAP`/`GGP`/`GIO`/`RFS STATUS`), **`Clear All Alarms`**, and **`Clear Log`**.
 
 </details>
@@ -179,15 +203,17 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
    - In the **top bar** of `Tmcm6110.App`, select `COM11` and baud rate (e.g., `9600` or `115200`), verify `ModAddr(#66)=1` and `HostAddr(#76)=2` in **Tab 2 (`Machine & System Settings`)**, and click **`Open Serial Port`**.
    - Point your host software (or `Tmcm6110.HostTester`) to `COM10`.
 2. **Via Local TCP (`127.0.0.1:4001`)**:
-   - Run `Tmcm6110.HostTester` (or `dotnet run --project src/Tmcm6110.HostTester`) and choose option **`[2]`** to test commands immediately without installing virtual COM drivers.
+   - Run `Tmcm6110.HostTester` (or `dotnet run --project src/Tmcm6110.HostTester`) and choose option **`[2]`** to test commands immediately without installing virtual COM drivers (option **`[7]`** runs the interactive TMCL-IDE Download, `Cmd 134` Readback & Standalone VM 3-axis demo).
 
 ### Custom Configuration Loading (`.ini` / `.tmc` / Axis Mapping `.txt`)
 
 - Open **Tab 2 (`Machine & System Settings`) → `Load .ini / .tmc`** to load TMCL-IDE Setup Wizard `.ini` exports, `.tmc` (`SAP`/`SGP`) scripts, or axis-mapping `.txt` files at runtime (startup also auto-detects matching `.ini` and axis-mapping `.txt` files in the application/parent directories).
+- Open **Tab 3 (`TMCL Program / VM`) → `Load & Download (.tmc)`** to assemble and download a full standalone TMCL program (with labels, `#define` constants, subroutines, `WAIT`, and interrupts) into EEPROM program memory.
 - Axis-mapping `.txt` files match lines containing `axis <n> (...) <LABEL>` (for example `axis 0 (1st Axis) Z`, `axis 1 (2nd Axis) Y`, `axis 2 (3rd Axis) X`) and automatically synchronize role slots for the first three axes when `Z`/`Y`/`X` labels are present.
-- Ready-to-try public sample configurations are included in the repository:
+- Ready-to-try public sample configurations and standalone programs are included in the repository:
   - [`samples/demo_gantry.ini`](./samples/demo_gantry.ini) — Generic 3-axis gantry parameter preset (`[module_settings_axis%0..2]` & `[global_settings]`).
   - [`samples/demo_gantry.tmc`](./samples/demo_gantry.tmc) — Generic `SAP` / `SGP` initialization script.
+  - [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) — 3-axis pick-and-place standalone TMCL program demonstrating `CSUB`/`RSUB`, `DJNZ`, `WAIT POS`/`WAIT TICKS`, and a 100 ms Timer 0 `DOUT 0` heartbeat ISR.
 - Note: Private `.ini`, `.tmc`, and machine-specific `.txt` mapping files remain excluded in `.gitignore` (only `samples/*.ini` and `samples/*.tmc` are tracked) so production parameters stay local.
 
 ## Project Architecture & Workflow
@@ -198,7 +224,8 @@ src/
 │   ├── Abstractions/       IMotionController, IMotionAxis, IProtocolAdapter, Telemetry
 │   ├── Protocol/           TmclProtocolAdapter, TmclPacket, TmclDefinitions
 │   ├── Transport/          ByteStreamTransportServer (TCP / Serial COM), TmclSerialServer
-│   ├── Engine/             Tmcm6110Controller, AxisState, AxisRoleMap
+│   ├── Engine/             Tmcm6110Controller, AxisState, AxisRoleMap,
+│   │                       TmclProgramMemory, TmclStandaloneVm, TmclAssembler
 │   └── Config/             TmcmConfigLoader (.ini / .tmc / axis-map .txt)
 ├── Tmcm6110.App/
 │   ├── ViewModels/         MainViewModel, AxisViewModel
@@ -206,12 +233,13 @@ src/
 │   └── Resources/          Strings.en-US.xaml, Strings.zh-TW.xaml & Localization/
 └── Tmcm6110.HostTester/    Console host client & automated protocol self-test (--self-test)
 
-samples/                    Public sample presets (demo_gantry.ini, demo_gantry.tmc)
+samples/                    Public sample presets & standalone script (demo_gantry.ini/.tmc, demo_standalone.tmc)
 tests/
-└── Tmcm6110.Core.Tests/    xUnit tests (packet, controller, limits/alarms, role map, config, decoupling)
+└── Tmcm6110.Core.Tests/    xUnit tests (packet, controller, limits/alarms, role map, config, decoupling,
+                            download/memory, standalone VM, interrupts/debugger, assembler)
 ```
 
-`ByteStreamTransportServer` exchanges raw byte streams over TCP or Serial COM, while `TmclProtocolAdapter` parses and dispatches 9-byte binary TMCL frames to `Tmcm6110Controller` to update motion state. The WPF ViewModels read live position, speed, limit, and alarm telemetry from the controller and drive `IMachine3DScene` to render the active 3D scene.
+`ByteStreamTransportServer` exchanges raw byte streams over TCP or Serial COM, while `TmclProtocolAdapter` parses and dispatches 9-byte binary TMCL frames to `Tmcm6110Controller` to update motion state, store/read `TmclProgramMemory`, and drive `TmclStandaloneVm` (along with its 47-vector interrupt controller). `TmclAssembler` compiles `.tmc` standalone source into 9-byte instruction packets, and the WPF ViewModels read live axis and VM telemetry from the controller to drive `IMachine3DScene` and the Tab 3 disassembly debugger.
 
 ## Custom Development & Commercial Inquiries
 
