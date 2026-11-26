@@ -143,7 +143,7 @@ public class TmclStandaloneVmTests
             AGP 6, 2
             CALC XOR, 3
             AGP 7, 2
-            CALC NOT, 14
+            CALC NOT
             AGP 8, 2
 
             // CALCX 0..10
@@ -494,5 +494,32 @@ public class TmclStandaloneVmTests
         StepUntilStopped(controller, 200);
         Assert.Equal(777, controller.ProcessCommand(Cmd(TmclCommand.GGP, 10, 2, 0)).Value);
         Assert.Equal(200, controller.GetAxis(0).GetParameter(TmclAxisParam.ActualPosition, clearReadFlags: false));
+    }
+
+    [Fact]
+    public void UnaryCalcNot_DirectAndStandalone_InvertsAccumulator()
+    {
+        var controller = new Tmcm6110Controller();
+
+        // Direct Mode: CALC LOAD, 5 -> CALC NOT (operand=0) must invert Accumulator (~5 == -6)
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.CALC, 9, 0, 5)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.CALC, 8, 0, 0)).StatusEnum);
+        Assert.Equal(-6, controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 2, 0, 0)).Value);
+
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.CALC, 9, 0, -1)).StatusEnum);
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.CALC, 8, 0, 0)).StatusEnum);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 2, 0, 0)).Value);
+
+        // Standalone VM: CALC LOAD, 5 -> CALC NOT -> AGP 0, 2 -> STOP
+        DownloadAndRun(controller, """
+            CALC LOAD, 5
+            CALC NOT
+            AGP 0, 2
+            STOP
+            """);
+        StepUntilStopped(controller, 20);
+
+        Assert.Equal(~5, controller.ProcessCommand(Cmd(TmclCommand.GGP, 0, 2, 0)).Value);
+        Assert.Equal(-6, controller.ProcessCommand(Cmd(TmclCommand.GetAppStatus, 2, 0, 0)).Value);
     }
 }

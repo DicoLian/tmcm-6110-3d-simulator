@@ -391,4 +391,133 @@ public class TmclInterruptAndDebuggerTests
         Assert.Equal(0, resetSnap.ErrorFlags);
         Assert.Equal(0, resetSnap.CallStackDepth);
     }
+
+    [Fact]
+    public void Rst_FromInsideIsr_ClearsRegistersFlagsStackAndInterruptsAndAllowsReArming()
+    {
+        var controller = new Tmcm6110Controller();
+        DownloadProgram(controller, """
+            SGP 0, 2, 0             // Var0: unexpected branch marker
+            SGP 1, 2, -1            // Var1: Accu observed at AfterRst
+            SGP 2, 2, -1            // Var2: X observed at AfterRst
+            SGP 3, 2, 0             // Var3: stale Timer 0 IRQ count
+            SGP 4, 2, 0             // Var4: post-RST IRQ 40 count
+
+            // Trigger ETO error flag via short WAIT POS timeout
+            SAP 4, 0, 100
+            MVP ABS, 0, 20000
+            WAIT POS, 0, 2
+            MST 0
+
+            // Arm Timer 0 (20ms) and DIN 0 (IRQ 39, rising)
+            VECT 0, IsrTimer0Stale
+            SGP 0, 3, 20
+            EI 0
+            VECT 39, IsrRst
+            SGP 39, 3, 1
+            EI 39
+            EI 255
+
+            // Set Accu, X, Comparison flags, and 2-level call stack before waiting
+            CALC LOAD, 777
+            CALCX LOAD              // X = 777
+            CALC LOAD, 999          // Accu = 999
+            COMP 500                // GT = true, EQ/LT/ZE = false
+            CSUB Sub1
+            SGP 0, 2, 111
+            STOP
+
+            Sub1:
+                CSUB Sub2
+                RSUB
+            Sub2:
+                WAIT TICKS, 0, 20
+                SGP 0, 2, 222
+                RSUB
+
+            IsrRst:
+                RST AfterRst
+
+            IsrTimer0Stale:
+                CALCV ADD, 3, 1
+                RETI
+
+            AfterRst:
+                AGP 1, 2
+                CALCX SWAP
+                AGP 2, 2
+                JC ZE, BadFlag
+                JC EQ, BadFlag
+                JC GT, BadFlag
+                JC LT, BadFlag
+                JC ETO, BadFlag
+                WAIT TICKS, 0, 4
+                VECT 40, IsrAfterRst
+                SGP 40, 3, 1
+                EI 40
+                EI 255
+                WAIT TICKS, 0, 5
+                STOP
+
+            BadFlag:
+                SGP 0, 2, 333
+                STOP
+
+            IsrAfterRst:
+                CALCV ADD, 4, 1
+                RETI
+            """);
+
+        Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.RunApplication, 1, 0, 0)).StatusEnum);
+
+        // Step until WAIT POS times out (ETO=1) and VM reaches nested Sub2 WAIT TICKS (stack depth=2)
+        StandaloneVmSnapshot preRstSnap = default;
+        for (int i = 0; i < 10; i++)
+        {
+            controller.StepSimulation(0.01);
+            preRstSnap = controller.GetStandaloneSnapshot();
+            if (preRstSnap.CallStackDepth == 2 && preRstSnap.IsWaiting)
+                break;
+        }
+
+        Assert.Equal(2, preRstSnap.CallStackDepth);
+        Assert.Equal(999, preRstSnap.Accumulator);
+        Assert.Equal(777, preRstSnap.XRegister);
+        Assert.Equal(1, preRstSnap.ErrorFlags);
+        Assert.True(preRstSnap.GlobalInterruptsEnabled);
+
+        // Trigger DIN 0 -> IsrRst runs and executes RST AfterRst from inside ISR
+        controller.SetDigitalInput(0, true);
+        controller.StepSimulation(0.01);
+
+        var postRstSnap = controller.GetStandaloneSnapshot();
+        Assert.Equal(TmclAppStatus.Run, postRstSnap.Status);
+        Assert.False(postRstSnap.IsInInterrupt);
+        Assert.Equal(-1, postRstSnap.ActiveInterruptNumber);
+        Assert.False(postRstSnap.GlobalInterruptsEnabled);
+        Assert.Equal(0, postRstSnap.CallStackDepth);
+        Assert.Equal(0, postRstSnap.Accumulator);
+        Assert.Equal(0, postRstSnap.XRegister);
+        Assert.Equal(0, postRstSnap.ErrorFlags);
+        Assert.True(postRstSnap.IsWaiting); // Paused at WAIT TICKS, 0, 4
+
+        // Finish 40ms wait -> stale Timer 0 must NOT fire; then re-arm DIN 1 (IRQ 40)
+        for (int i = 0; i < 4; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 3, 2, 0)).Value);
+        Assert.True(controller.GetStandaloneSnapshot().GlobalInterruptsEnabled);
+
+        // Trigger DIN 1 -> IsrAfterRst must fire cleanly, proving IsInInterrupt was cleared
+        controller.SetDigitalInput(1, true);
+        for (int i = 0; i < 10 && controller.GetStandaloneSnapshot().Status != TmclAppStatus.Stop; i++)
+            controller.StepSimulation(0.01);
+
+        Assert.Equal(TmclAppStatus.Stop, controller.GetStandaloneSnapshot().Status);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 0, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 1, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 2, 2, 0)).Value);
+        Assert.Equal(0, controller.ProcessCommand(Cmd(TmclCommand.GGP, 3, 2, 0)).Value);
+        Assert.Equal(1, controller.ProcessCommand(Cmd(TmclCommand.GGP, 4, 2, 0)).Value);
+    }
 }
