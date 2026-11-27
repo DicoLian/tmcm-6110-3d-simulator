@@ -213,7 +213,7 @@ https://github.com/user-attachments/assets/3f8b5a76-0ad5-4a7a-8779-d88812af3ebb
 - 專案內附可直接試用的公開範例設定與程式檔：
   - [`samples/demo_gantry.ini`](./samples/demo_gantry.ini) — 通用三軸龍門參數預設檔（`[module_settings_axis%0..2]` 與 `[global_settings]`）。
   - [`samples/demo_gantry.tmc`](./samples/demo_gantry.tmc) — 通用 `SAP` / `SGP` 初始化腳本。
-  - [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) — 三軸取放循環 Standalone TMCL 範例程式，展示 `CSUB`/`RSUB`、`DJNZ`、`WAIT POS`/`WAIT TICKS` 與 100 ms Timer 0 `DOUT 0` 心跳中斷。
+  - [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) — 三軸取放循環 Standalone TMCL 範例程式（相容 TMCL-IDE `NAME = VALUE` 語法），展示 `CSUB`/`RSUB`、`GGP`/`CALC`/`AGP`/`COMP`/`JC` 迴圈計數、`WAIT POS`/`WAIT TICKS` 與 100 ms Timer 0 `DOUT 0` 心跳中斷。
 - `.gitignore` 預設排除所有私人 `*.ini`、`*.tmc` 與機台軸向定義檔（僅追蹤 `samples/*.ini` 與 `samples/*.tmc` 公開範例），確保客戶敏感參數不會被上傳至公開儲存庫。
 
 ## 專案結構與運作流程

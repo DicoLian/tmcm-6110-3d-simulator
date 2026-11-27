@@ -192,6 +192,9 @@ public class TmclAssemblerTests
         string demoPath = FindRepoFile("samples", "demo_standalone.tmc");
         string source = File.ReadAllText(demoPath);
 
+        Assert.DoesNotContain("#define", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DJNZ", source, StringComparison.OrdinalIgnoreCase);
+
         var asm = TmclAssembler.Assemble(source);
         Assert.True(asm.Success, string.Join(Environment.NewLine, asm.Errors));
         Assert.True(asm.Packets.Count > 0);
@@ -210,6 +213,8 @@ public class TmclAssemblerTests
         Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.QuitDownload, 0, 0, 0)).StatusEnum);
 
         Assert.Equal(asm.Packets.Count, controller.GetStandaloneSnapshot().InstructionCount);
+        var disasm = controller.GetDisassembledProgram();
+        Assert.Equal(asm.Packets.Count + 1, disasm.Count);
 
         // Run from address 0
         Assert.Equal(TmclStatus.SuccessOk, controller.ProcessCommand(Cmd(TmclCommand.RunApplication, 1, 0, 0)).StatusEnum);

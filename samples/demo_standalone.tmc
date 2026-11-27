@@ -5,37 +5,41 @@
 //   Axis 2 = X-Axis (Gantry Bridge)
 //
 // Features demonstrated:
-//   - #define symbolic constants and comments
+//   - TMCL symbolic constants (NAME = VALUE) and comments (TMCL-IDE compatible)
 //   - Timer 0 interrupt heartbeat (100 ms) toggling DOUT 0 via Bank 2 user var
-//   - Pick-and-place gantry cycle loop using SGP / DJNZ / MVP ABS / WAIT POS
+//   - Pick-and-place gantry cycle loop using SGP / GGP / CALC / AGP / COMP / JC / MVP ABS / WAIT POS
 //   - Safe Z-retract subroutine (CSUB MoveSafeZ / RSUB) and dwell (WAIT TICKS)
 // =============================================================================
 
 // --- Axis Assignments ---
-#define AXIS_Z          0
-#define AXIS_Y          1
-#define AXIS_X          2
+AXIS_Z = 0
+AXIS_Y = 1
+AXIS_X = 2
 
 // --- Motion Profile Parameters ---
-#define Z_SPEED         1500
-#define Z_ACCEL         800
-#define Y_SPEED         1800
-#define Y_ACCEL         1000
-#define X_SPEED         2000
-#define X_ACCEL         1000
+Z_SPEED = 1500
+Z_ACCEL = 800
+Y_SPEED = 1800
+Y_ACCEL = 1000
+X_SPEED = 2000
+X_ACCEL = 1000
 
 // --- Gantry Waypoints (microsteps) ---
-#define Z_SAFE_POS      0
-#define Z_PICK_POS      -15000
-#define Z_PLACE_POS     -12000
-#define Y_PICK_POS      18000
-#define Y_PLACE_POS     36000
-#define X_PICK_POS      24000
-#define X_PLACE_POS     45000
+Z_SAFE_POS = 0
+Z_PICK_POS = -15000
+Z_PLACE_POS = -12000
+Y_PICK_POS = 18000
+Y_PLACE_POS = 36000
+X_PICK_POS = 24000
+X_PLACE_POS = 45000
 
 // --- Timing & User Variable Assignments ---
-#define VAR_HEARTBEAT   1       // Bank 2 Var #1: DOUT 0 toggle state (0 or 1)
-#define DWELL_TICKS     20      // 20 ticks * 10 ms/tick = 200 ms dwell
+// Bank 2 Var #0: Pick-and-place cycle loop counter
+VAR_LOOP = 0
+// Bank 2 Var #1: DOUT 0 toggle state (0 or 1)
+VAR_HEARTBEAT = 1
+// 20 ticks * 10 ms/tick = 200 ms dwell
+DWELL_TICKS = 20
 
 // =============================================================================
 // Initialization
@@ -56,7 +60,7 @@ EI 0                            // Enable Timer 0 interrupt
 EI 255                          // Enable global interrupts
 
 // Run 2 pick-and-place cycles using Bank 2 User Variable #0 as loop counter
-SGP 0, 2, 2
+SGP VAR_LOOP, 2, 2
 
 // =============================================================================
 // Main Pick-and-Place Cycle Loop
@@ -88,7 +92,12 @@ CycleLoop:
     WAIT TICKS, 0, DWELL_TICKS
     CSUB MoveSafeZ
 
-    DJNZ 0, CycleLoop           // Decrement Var #0; repeat while non-zero
+    // Decrement loop counter (Var #0); repeat while > 0
+    GGP VAR_LOOP, 2
+    CALC SUB, 1
+    AGP VAR_LOOP, 2
+    COMP 0
+    JC GT, CycleLoop
 
 // =============================================================================
 // Park & Shutdown

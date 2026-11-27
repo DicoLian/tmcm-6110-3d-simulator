@@ -1615,10 +1615,24 @@ public class MainViewModel : INotifyPropertyChanged, IDisposable
     public void RunStandaloneProgram()
     {
         StandaloneVmSnapshot snap = Controller.GetStandaloneSnapshot();
-        byte runType = (snap.Status == TmclAppStatus.Reset ||
-            (snap.ProgramCounter >= snap.InstructionCount && snap.InstructionCount > 0))
-            ? (byte)1
-            : (byte)0;
+        bool restartFromZero = snap.Status == TmclAppStatus.Reset ||
+            (snap.ProgramCounter >= snap.InstructionCount && snap.InstructionCount > 0);
+
+        if (!restartFromZero &&
+            snap.Status == TmclAppStatus.Stop &&
+            snap.InstructionCount > 0 &&
+            snap.ProgramCounter >= 0)
+        {
+            IReadOnlyList<TmclProgramLine> programLines = Controller.GetDisassembledProgram();
+            if (snap.ProgramCounter < programLines.Count)
+            {
+                TmclInstruction currentInstr = programLines[snap.ProgramCounter].Instruction;
+                if (currentInstr.IsEndMarker || currentInstr.Opcode == (byte)TmclCommand.STOP)
+                    restartFromZero = true;
+            }
+        }
+
+        byte runType = restartFromZero ? (byte)1 : (byte)0;
         Controller.ProcessCommand(new TmclCommandPacket(ModuleAddress, (byte)TmclCommand.RunApplication, runType, 0, 0));
         RefreshStandaloneVmState();
     }

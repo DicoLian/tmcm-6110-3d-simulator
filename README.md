@@ -213,7 +213,7 @@ Select **Active Axes (`1..6`)** in **Tab 2 (`Machine & System Settings`)** to dy
 - Ready-to-try public sample configurations and standalone programs are included in the repository:
   - [`samples/demo_gantry.ini`](./samples/demo_gantry.ini) — Generic 3-axis gantry parameter preset (`[module_settings_axis%0..2]` & `[global_settings]`).
   - [`samples/demo_gantry.tmc`](./samples/demo_gantry.tmc) — Generic `SAP` / `SGP` initialization script.
-  - [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) — 3-axis pick-and-place standalone TMCL program demonstrating `CSUB`/`RSUB`, `DJNZ`, `WAIT POS`/`WAIT TICKS`, and a 100 ms Timer 0 `DOUT 0` heartbeat ISR.
+  - [`samples/demo_standalone.tmc`](./samples/demo_standalone.tmc) — 3-axis pick-and-place standalone TMCL program (TMCL-IDE compatible `NAME = VALUE` syntax) demonstrating `CSUB`/`RSUB`, `GGP`/`CALC`/`AGP`/`COMP`/`JC` cycle loop, `WAIT POS`/`WAIT TICKS`, and a 100 ms Timer 0 `DOUT 0` heartbeat ISR.
 - Note: Private `.ini`, `.tmc`, and machine-specific `.txt` mapping files remain excluded in `.gitignore` (only `samples/*.ini` and `samples/*.tmc` are tracked) so production parameters stay local.
 
 ## Project Architecture & Workflow
